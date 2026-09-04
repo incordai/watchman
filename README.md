@@ -36,7 +36,7 @@ Every memory product will tell you it remembers. Here is what none of them will 
 
 | | |
 |---|---|
-| 🔒 **It can block a tool call.** | A `PreToolUse` hook returns *refused*, with a reason. Guards are compiled code, not prompt text an agent can reason its way around. No other tool in this comparison can do this. |
+| 🔒 **It hits `Esc` for you.** | You know the move: watch an agent start down the wrong path, interrupt, type *"read the file first."* A `PreToolUse` hook does that before the call runs, on the sessions you are not watching. Guards are compiled code, not prompt text an agent can reason its way around. |
 | 🔍 **The agent audits itself.** | A second model reviews the files the coder just edited and files findings the coder is forced to answer in its next turn. Claims of "fixed" are re-checked, not believed. |
 | 🕸️ **It understands code, not just text.** | Symbols, call edges, file history, tree-sitter chunking. `find_symbol` returns a definition, not a ranked guess. |
 | 🤝 **Teams sync machine to machine.** | The server is a phone book and a post box. It never holds plaintext, never arbitrates a conflict, and everything keeps working while it is down. |
@@ -78,6 +78,7 @@ Autonomy is a dial on the reversible work. It is never a bypass on the work that
 - [The owner proxy](#the-owner-proxy)
 - [The recorder](#the-recorder--the-same-answer-is-never-paid-for-twice)
 - [Three memory planes](#three-memory-planes-one-interface)
+- [In testing — the platform](#in-testing--the-platform-built-on-the-memory)
 - [Storage model](#storage-model)
 - [Configuration](#configuration)
 - [Engineering decisions, and why](#engineering-decisions-and-why)
@@ -94,7 +95,7 @@ Ask what actually has to be true for an AI memory system to be worth adopting:
 
 **It has to require nothing of you.** A memory tool with a "save this" button is a memory tool that ends up empty, because the moment worth saving is never the moment you think to press it. Watchman captures through editor hooks, so the record is complete whether or not anyone was paying attention. Everything downstream — indexing, the code graph, the auditor, peer sync — is background work on a schedule. The correct amount of ongoing effort is zero, and that is what this costs.
 
-**It has to be there tomorrow.** Hosted memory is a dependency with a pricing page and a shutdown notice. Watchman is a binary on your disk and a single redb file. There is no version of "the vendor changed direction" that takes your history away.
+**It has to be there tomorrow.** Hosted memory is a dependency with a pricing page and a shutdown notice. The memory engine is an executable on your disk and a single redb file. There is no version of "the vendor changed direction" that takes your history away.
 
 **It has to cost nothing at the margin.** Recall runs against a local 256-dimensional index. You are not billed to remember. That single fact changes behaviour: teams that pay per query learn to query less, and a memory nobody searches is not a memory.
 
@@ -116,8 +117,11 @@ Agent tooling gets expensive in two ways: model calls you did not need, and your
 | **Proven work is never repeated** | The recorder serves deterministic tool calls from the record instead of running and billing them again. |
 | **The auditor has a dial** | Files per run is an explicit setting, because a strong model is slow and metered. You choose the depth instead of discovering the bill. |
 | **And the largest saving is not billed at all** | Every approval the proxy answers is an interruption that never reaches you. |
+| **(In testing) every subscription at once** | The Code harness runs on the plans you already hold — Claude, Gemini, Codex — and can put several on the *same* task rather than picking one at config time. |
 
 **Set every model to `off` and it still works.** Capture, filing, linking, the graph and search all keep running with nothing spent. The memory does not depend on a model being paid — that is the floor, and the floor is free.
+
+**And the sharing is free to start:** two teammates and one owner device, at no cost. The data path is peer to peer either way, so a free tier is not a throttled version of the product — it is the whole product, with the introduction service costing us little enough to give away.
 
 ---
 
@@ -127,7 +131,7 @@ Agent tooling gets expensive in two ways: model calls you did not need, and your
 
 | | **Watchman** | Mem0 | Zep | Letta | Claude native | Cursor rules |
 |---|---|---|---|---|---|---|
-| **Can block a tool call** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Blocks on memory state** | **✅** per subject | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Self-auditing code review** | **✅** live, on save | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Decides for you while you're away** | **✅** proxy | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **Caches proven tool results** | **✅** recorder | ❌ | ❌ | ❌ | ❌ | ❌ |
@@ -223,6 +227,41 @@ graph TB
 ```
 
 **The red box is the whole argument.** Every competitor's diagram has that box in the middle, holding the data. Here it is off to the side, holding nothing, and the system survives its absence.
+
+### One UI, separate services
+
+Watchman is **not one binary**. Each capability ships as its own executable, and they talk to each other over MCP — the same interface any external agent uses. The desktop app is a single pane over whichever ones you have installed.
+
+```mermaid
+graph TB
+    APP["Desktop app — one pane"]
+
+    subgraph SERVICES["Separate executables, MCP between them"]
+        MEM["Memory engine<br/>capture · recall · graph · governance<br/><i>the one everything else needs</i>"]
+        CODE["Code harness"]
+        KNOW["Knowledge"]
+        MAN["Manthan"]
+    end
+
+    APP --> MEM
+    APP --> CODE
+    APP --> KNOW
+    APP --> MAN
+    CODE <-->|"MCP"| MEM
+    KNOW <-->|"MCP"| MEM
+    MAN <-->|"MCP"| MEM
+
+    style MEM fill:#0d3b2e,stroke:#10b981,color:#e6fffa
+    style SERVICES fill:#1e2a4a,stroke:#60a5fa,color:#dbeafe
+```
+
+**Install only what you use.** Plenty of people want memory and guardrails for the agent CLI they already have and nothing else — they should not download a knowledge ingestion engine to get it. One bundled download would be enormous for the majority who want one part of it.
+
+**The memory engine is the dependency, not a hub.** It holds the store, the embedder and the graph, and the others read through it. Knowledge reuses the same embedding and reranking models rather than shipping its own — one model on disk, one set of vectors, one ranking behaviour everywhere.
+
+> **The consequence to design for:** the model is *loaded once and served*, not loaded per process. Four executables each holding their own copy of the embedder would mean four times the RAM and four cold starts of ~2.5 minutes. One process owns the model and answers embed and rerank calls for the rest — that single decision is what makes the split cheap instead of expensive.
+
+Because the interface between them is MCP, the boundary between services is the same one third parties get. A service you have not installed is simply a set of tools that are not there, and everything else keeps working.
 
 ### The loop that makes an agent improve instead of drift
 
@@ -449,6 +488,16 @@ flowchart TD
 
 **Embeddings are 256-dimensional**, truncated from the model's native width and re-normalised to unit length before storage (`src/embedder.rs:526`). The `incord-rag` crate also carries multimodal entry points — `embed_image`, `embed_video`, `embed_document`, `has_vision` — alongside `rerank`, `rerank_with_instruct` and `rerank_batch`.
 
+### One embedding space, everywhere
+
+**Qwen embeds at rest on every machine, GPU or not.** Vectors written on a workstation and vectors written on a laptop are directly comparable — which is what makes P2P sync of code chunks possible at all. A store whose vectors depended on the hardware that wrote them could not be merged across machines, and the failure would not even be an error: just silently wrong neighbours.
+
+Only the **reranker** adapts to the hardware. `MEMORY_RERANKER` takes `auto`, `quality` or `fast` — the large cross-encoder when an accelerator is usable, the small one (MiniLM) otherwise. The choice is made at engine start, because it decides which weights are read off disk.
+
+That split is deliberate. Reranking reorders candidates and **never writes state**, so falling back costs a little ranking quality and nothing else. Embedding writes the index, so it does not get to vary.
+
+> A team that needs identical ordering across machines pins `MEMORY_RERANKER` rather than leaving it on `auto` — otherwise a GPU machine and a CPU machine will order the same candidate set slightly differently.
+
 ### The graph is folder-shaped, not one giant blob
 
 This is where most knowledge-graph memory quietly falls over. Everything gets wired to everything, the graph becomes a hairball, and by month three a query traverses half your history to answer a question about one file.
@@ -522,6 +571,12 @@ Identity is an **ed25519 keypair as node-id** (`src/p2p/identity.rs`), with sign
 
 ## Governance: rules, guards and gates
 
+**You already know this move.** You are watching an agent work, you see it start down the wrong path, you hit `Esc` and type *"read the file first."*
+
+That keystroke is the most valuable thing you do all day, and it has two problems. It is **late** — the agent has already started. And it needs **you sitting there**, which means it does not happen at 2am, or on the fourth parallel session, or on the run you walked away from.
+
+This is that keystroke, fired before the call executes, on the sessions nobody is watching.
+
 Every other tool in the comparison table implements rules as text in a prompt, which means the rule holds exactly as long as the model feels like honouring it. Here a rule is a function that returns *refused*.
 
 ```mermaid
@@ -566,7 +621,70 @@ Each class flips between **strict** and allow-always **independently**, so tight
 
 There is a CLI too — `guard allow / block / once / status` — for when you are already in a terminal.
 
+### What a block actually looks like
+
+Not a warning in a log. The tool call does not run, and the agent is handed the reason and the way out:
+
+```
+Error: PreToolUse:Bash hook error:
+["C:\Users\...\AppData\Local\Incord Memory\incord-memory-service.exe"]
+hook pre-tool:
+
+⛔ Rule 9 (memory first) — action-time gate, subject "vps", attempt 1 of 3.
+This session has not queried memory about THIS subject. Incord already
+holds the past decisions, the deploy path and the architecture for this
+machine; deriving them again from the filesystem is how the same ground
+gets re-covered every session.
+
+  • Ask about this subject — `recall_index` with a plain-language question
+    mentioning "vps", then `recall_get` for the hits you need. Then repeat
+    this call: it clears "vps" for the rest of the session.
+  • A recall about something ELSE does not clear this one. The gate is per
+    subject because one recall used to clear every subject for a whole session.
+  • Memory is context, not ground truth for code (Rule 9) — re-verify
+    anything code-related against the current source before acting on it.
+
+After 3 attempts this subject stands down on its own, so a memory service
+that is down cannot wedge the session.
+```
+
+And the next line in that transcript is the agent complying — `recall_index` with `query: "VPS production deploy — disk and data volume for the redb databases"`, returning reranked hits from its own history.
+
+![The memory-first gate blocking a Bash call, and the agent's recall in response](docs/images/gate-block-live.png)
+
+Four things in that message are the design, not the wording:
+
+| | |
+|---|---|
+| **The gate is per subject** | One recall used to clear every subject for a whole session. It doesn't any more — asking about something else does not buy you this one. |
+| **It teaches the way out** | The block names the exact tools to call and what will clear it. A guard that only says *no* gets disabled by the end of the week. |
+| **It stands down after 3** | A memory service that is down cannot wedge a session. Refusing to fail open here would make the whole thing unshippable. |
+| **Memory is context, not ground truth** | The rule tells the agent to re-verify anything code-related against current source. Memory that claims to be authoritative about code is worse than no memory. |
+
+**This is the part that has no equivalent elsewhere.** Blocking a tool call is not itself rare — several agent runtimes can deny one. What is rare is a block *conditioned on memory state*: this call is stopped because the store knows this session has never asked about `vps`, and it unblocks the moment that stops being true. No other tool can gate on that, because no other tool holds the state to gate on.
+
+### Why this holds where a prompt does not
+
+The rule is not text in a system prompt asking the model to behave. It arrives **at process time, as the tool call's result**. That difference is the whole reason the mechanism works, and it is worth being precise about what each layer actually guarantees:
+
+| Layer | Guarantee |
+|---|---|
+| **The call does not run** | Deterministic. The hook returns a block and the tool never executes. There is no model judgement involved, so there is no percentage attached to it. |
+| **The obvious routes around it are closed** | Deterministic, per covered route. This is what `shell_source_edit_gate` is for — an agent denied the editor tool reaches for `sed -i`, and that path is gated too. |
+| **The agent then does the right thing** | Probabilistic, and high — a reason delivered as a tool result is acted on far more reliably than the same sentence sitting in a prompt from 200 messages ago. But it is the model deciding, so it is not a guarantee. |
+| **The irreversible still reaches you** | Deterministic. Guard-stopped commands are never auto-decided, and the severity ceiling and PIN gate hold regardless of the proxy's posture. |
+
+**Read that table as defence in depth, not as one claim.** The layer that stops damage is the first one and it does not depend on the model cooperating. The layer that depends on cooperation is the one that decides whether the session continues *gracefully* — and if it fails, the cost is a wasted attempt, not a deleted database. The blast radius of the probabilistic layer is bounded by the deterministic ones on either side of it.
+
+### It remembers what it got wrong
+
+Mistakes are stored as facts like anything else, and injected the same way. An agent that broke a build a particular way, or took a wrong approach on a subject, meets that record the next time the subject comes up — not as a rule someone wrote afterwards, but as its own history.
+
+This is the compounding half of the design. Rules cover what you thought to forbid in advance. **The stored-mistake record covers what nobody predicted**, which is most of it, and it grows without anyone maintaining it.
+
 ### What has no switch at all
+
+
 
 The genuinely destructive cases are **not on that page**, and their absence is the design: deleting a critical path, reading secret files, piping the web into a shell. There is no toggle to find because they are never bypassable. A permission system whose most dangerous entries can be turned off by the thing being governed is decoration.
 
@@ -578,7 +696,29 @@ The genuinely destructive cases are **not on that page**, and their absence is t
 
 A desktop notification here, a push on your phone, a card in the console. Each names the rule that stopped it and why.
 
-**Every gate stands down after 3 attempts**, and each has an off switch (`MEMORY_FIRST_OFF`, `SESSION_OPENING_OFF` in a project's `.incord/`, or `~/.incord/RULE_GATE_OFF` globally). **A memory service that is down can never wedge a session** — a deliberate property, not an accident. Enforcement you cannot disable is enforcement you will eventually rip out.
+### Staleness gates — where model knowledge is systematically wrong 🚧
+
+A model suggests whatever was common in its training data, not what exists today. It reaches for the version it saw most often, and it has no way to know which things have moved since. That is not an occasional mistake — it is a **predictable, structural** failure with a known trigger moment.
+
+Which makes it gateable. The first one fires when a dependency is added: the call is held until the current version has actually been checked against the registry.
+
+| Trigger | What the model gets wrong |
+|---|---|
+| **Adding a dependency** | The version it remembers, not the version that shipped |
+| **Calling a changed API** | A signature that was correct at cutoff |
+| **Using a deprecated flag** | A flag that has since been removed |
+| **Writing a config** | A format that has since changed shape |
+
+The interception point is what makes these possible at all. Catching a stale version at review time means it is already in the tree; catching it at the moment of use means it never enters. **Nothing that reads the diff afterwards can do this** — you have to be standing at the tool call.
+
+Three properties carry over from the gates above, and all three are required:
+
+- **Cached per subject.** A package checked once this session is not checked again — otherwise fifteen additions to a `Cargo.toml` become fifteen round trips, and a gate that slow gets switched off by the end of the week.
+- **Recorder-backed, with a time bound.** A registry lookup is close to deterministic within a short window, so it belongs in the recorder — but on a TTL rather than a permanent verdict, since the answer changing is the entire point.
+- **Stands down when offline.** Unreachable registry means the gate steps aside on the same three-attempt rule. A flaky network must never wedge a session.
+
+**Every gate stands down after 3 attempts**
+, and each has an off switch (`MEMORY_FIRST_OFF`, `SESSION_OPENING_OFF` in a project's `.incord/`, or `~/.incord/RULE_GATE_OFF` globally). **A memory service that is down can never wedge a session** — a deliberate property, not an accident. Enforcement you cannot disable is enforcement you will eventually rip out.
 
 Rule text is injected at `SessionStart` and again on `UserPromptSubmit`, so a rule cannot fall out of a long context.
 
@@ -731,6 +871,126 @@ Because each plane is a separate MCP surface, **anyone can build on it**. Your m
 
 ---
 
+## In testing — the platform built on the memory
+
+> **Everything above this line ships today.** Everything below runs in the beta app (`v0.1.0`) and is **not finished**. It is documented here because the shape matters: memory is the foundation, and these are what a foundation that already remembers makes possible. Do not plan around dates.
+>
+> Each of these is a **separate executable** that reaches the memory engine over MCP. Install the ones you want; the rest are simply absent.
+
+### Code — a harness that finishes the job
+
+![The Code page: workers with live state, files touched, and progress](docs/images/code-workers.png)
+
+*Builder · Reviewer · Tester · Deployer · Migrator — each with its own state, and the local address of whatever is serving.*
+
+Built because the existing agent CLIs stop. This one runs a crew of workers to the goal, spawns sub-agents on its own, records every file it touches, and reports where the running thing is listening so you can open it.
+
+The commercial point is the model routing: **it runs on the subscriptions you already pay for.** Claude, Gemini and Codex can work the *same task at the same time* — not one provider chosen at config time, but several in parallel on one goal. Combined with the recorder, the routine half of the work stops reaching a metered model at all.
+
+### Live session view — watch it work, and steer it
+
+The Code page files edits when a turn ends. That is right for memory and wrong for watching, so the live view is a second path: **full fidelity on localhost, a digest to your phone.**
+
+```mermaid
+flowchart LR
+    W["Worker"] --> H["Hook"]
+    H --> DB[("redb<br/>durable write first")]
+    DB --> B["Broadcast"]
+    B -->|"WebSocket · localhost<br/>every frame"| APP["Desktop app"]
+    B -->|"state + approvals only<br/>E2E, via relay"| PH["Owner's phone"]
+
+    style DB fill:#0d3b2e,stroke:#10b981,color:#e6fffa
+    style APP fill:#2d2a4a,stroke:#a78bfa,color:#ede9fe
+    style PH fill:#1e2a4a,stroke:#60a5fa,color:#dbeafe
+```
+
+**The socket is never the source of truth.** The durable write happens first and the stream is a projection of it. Each session frame carries a monotonic sequence number, so a client that reconnects says *"I have up to N"* and the gap is replayed from the store — the same cursor-and-idempotency guarantee the P2P pull already gives. A closed laptop lid loses nothing.
+
+**The full stream costs the server nothing**, because it never reaches the server. The engine is already on the machine and so is the app: that WebSocket is localhost, with no TLS, no bandwidth and no relay hop. It scales with your hardware, not ours.
+
+Only the owner's phone goes through the relay, and it does not get tokens — it gets **state transitions and approvals**, tens of frames per session rather than thousands. Since the relay carries E2E-encrypted blobs it cannot read, the ciphertext cannot be compressed or coalesced; sending a digest rather than a stream is the only optimisation available, so that is what it sends.
+
+#### What is on the timeline is the point
+
+Live output is table stakes — every harness shows activity. What no other one can put on that timeline is the governance:
+
+| Frame | What you see |
+|---|---|
+| **Blocked** | Which guard rule fired, and the exact reason |
+| **Decided** | That the proxy answered as you, and which line of the brief it decided from |
+| **Served** | A recorder cache hit — no model call — with a running count of calls saved this session |
+| **Finding** | The auditor's finding landing against a file seconds after the coder wrote it |
+
+That is not an activity log. It is a live record of an agent being governed, and it is the one part of a coding harness a competitor cannot copy without first building a guard, a proxy, a recorder and an auditor.
+
+> Backpressure is per frame type. Intermediate *thinking* frames are droppable; state transitions and approval requests are not — losing one of those leaves the UI showing a worker as running when it is actually blocked on you.
+
+### Agent — one interface, any speciality
+
+
+![The Agent page: named agents with specialities and plugins](docs/images/agent-page.png)
+
+General-purpose agents you give a character and a speciality, with plugins attached, talking to the same memory as everything else.
+
+### Manthan — several models, one answer, rendered as a file
+
+![Manthan: describe what you want and get a deck, doc, PDF or spreadsheet](docs/images/manthan.png)
+
+*Slides · Docs · PDF · Sheets · Websites. Swarm, Deep Research and Design are not enabled yet.*
+
+Describe a file in plain language and get the file. Two design decisions do the work:
+
+**The model never writes the file.** It fills in a structured answer, and the service renders that into the format you asked for — which is why one description can come back as a document *or* a PDF without asking twice.
+
+**Several models answer, and a judge picks.** Each model contributes, a judging model takes the strongest claim, and the others build on it — a filter, not a vote. And it reads your own memory and knowledge graph first, so the answer starts from what you have already said and written rather than from nothing.
+
+### Knowledge — the world, ingested before you ask
+
+![The Knowledge layer: sources ingested, resolved into entities, served by domain](docs/images/knowledge-layer.png)
+
+*One store. Every source. Answers in the shape of the work.*
+
+| | |
+|---|---|
+| **Ingest continuously** | Sources re-read every 5–10 minutes in their native form. No schema to agree on first, and no crawl window to wait out. |
+| **Resolve and embed** | Entities and the relations between them are extracted, then embedded — so two records that mean the same thing sit together whatever they were called. |
+| **Serve by domain** | One store, scoped on the way out: finance, code, research or commerce, according to what asked. |
+| **Answer without the network** | An agent reads it with the internet unplugged. Nodes reconcile peer to peer when they can reach each other — no central service to be down. |
+
+The comparison worth making is not breadth. A search engine will always cover more topics, and it will always need the network. This is the other axis: **everything already ingested about one subject, resolved and ranked, available with the wire pulled out.** Depth on the topic you actually work in, at zero latency and zero crawl.
+
+#### What one call returns
+
+A single query — *"latest news on Nvidia"* — comes back with structured live data and unstructured reporting **fused and ranked together**:
+
+```
+query: "Latest news on Nvidia"
+stats: 133,439 candidates · embed 448ms · search 282ms
+
+→ live snapshot   NVDA multi-timeframe: RSI, MACD, EMA20/50/200,
+                  Bollinger, ATR, ADX, Ichimoku, floor pivots — 1h and 1d
+→ live snapshot   NVDA quote: price, day range, 52-week range,
+                  volume, market cap, P/E, EPS
+→ 8 events        equity portfolio reporting · the Hugging Face
+                  acquisition · analysis, across six outlets
+```
+
+That shape is the point. A search engine returns links to eight pages you then read; this returns the numbers *and* the reporting, already resolved, in under a second. It is not a better index of the web — it is a different output type.
+
+#### Why it does not grow without bound
+
+Ten-minute granularity has near-zero recall value after a week. Nobody asks what the RSI was at 14:20 last March. So the tiers are:
+
+| Tier | Retention |
+|---|---|
+| **Live snapshots** | Overwritten in place, one per symbol per source. Bounded by symbol count, not by time. |
+| **Daily open and close** | Finalised and kept. One row per symbol per day. |
+| **Events** | Append-only, and the actual driver of storage growth. |
+
+Which puts the market-data half on a flat line and leaves news as the only curve that climbs — a few GB a year at retail-market coverage, rather than the hundreds of GB an append-everything design would reach.
+
+---
+
 ## Storage model
 
 **redb**, embedded, single file. 41 tables.
@@ -861,6 +1121,12 @@ Four claims in this README are absolute, and they are the four in the matrix. Ev
 | Company memory plane | ✅ shipping — drop a file, it is embedded and in the graph |
 | P2P team sync | ✅ shipping — direct pull + relay fallback |
 | Belief hold | ✅ releases as soon as the CLI answers again |
-| WebSocket owner surface | 🚧 planned |
+| Staleness gates (dependency versions first) | 🚧 designed |
+| Live session view (localhost WS + owner digest) | 🚧 designed |
+| Code harness (multi-provider workers) | 🧪 in testing |
+| Agent surface | 🧪 in testing |
+| Manthan (multi-model fusion → files) | 🧪 experimental |
+| Knowledge layer | 🧪 in testing — page still being built |
+| └ market-data redistribution terms | ❓ open question — settle before public release |
 
 **Test suite: 1,076 passing.**
