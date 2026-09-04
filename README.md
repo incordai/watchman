@@ -4,8 +4,7 @@ A local-first memory, governance and agent platform. Everything an AI coding age
 learns on your machine stays on your machine, syncs peer-to-peer to your teammates,
 and is governed by rules the agent cannot talk its way past.
 
-This is **the engine** — `incord-memory-service`. It is the product; the surrounding
-`Chat/` tree is a monorepo of services that ship around it.
+This is **the engine** — `incord-memory-service`.
 
 > **How to read this file.** Every number, path and name below was read out of this
 > repository, and each claim names the file it came from. Where a section describes
@@ -13,16 +12,14 @@ This is **the engine** — `incord-memory-service`. It is the product; the surro
 > products are the one exception — those are stated as of the date on each table and
 > should be re-checked before you rely on them.
 >
-> **Paths** are written relative to the **repository root** (`Chat/`), one level
-> above this file, so that a line copied out of here can be pasted into a `grep`
-> from the top of the tree. Paths beginning `src/` are relative to this crate.
+> **Paths** are relative to this crate — `src/…`, `crates/…`, `assets/…`.
 
 ---
 
 ## Contents
 
 - [What this is](#what-this-is)
-- [Where this sits](#where-this-sits)
+- [The tree](#the-tree)
 - [Architecture](#architecture)
 - [The engine](#the-engine)
 - [Function inventory](#function-inventory)
@@ -62,39 +59,32 @@ Four things distinguish it from a vector database with a chat wrapper:
 
 ---
 
-## Where this sits
+## The tree
 
 ```
-Chat/                        ← the monorepo, one level up from this file
-├── incord-memory-service/   ← YOU ARE HERE. The engine. Rust, 111,104 lines in src/.
-│   ├── src/                 ← 79 modules
-│   ├── crates/              ← incord-rag, incord-rerank, incord-simd
-│   ├── assets/owner/        ← owner.html, embedded into the binary
-│   └── docs/
-├── incord-llm-service/      ← inference + RAG + rerank + TTS + training crates
-├── incord-pay-service/      ← billing/payments
-├── server/                  ← the cloud gateway (rendezvous, relay, accounts)
-├── incord-dashboard/        ← the desktop app. React + Tauri v2, this engine as sidecar.
-├── agent/                   ← the agent runtime (15 crates)
-├── brain/                   ← research/graph/network runtime (12 crates)
-├── fruntend/                ← standalone admin + chat surfaces
-├── pipecat-bot/             ← Python voice bot
-└── docs/                    ← design notes and plans
+incord-memory-service/
+├── src/                     ← 79 modules, 111,104 lines
+│   ├── api/                 ← 23 HTTP modules, 159 routes
+│   ├── cli/                 ← hooks, guards, gates, install
+│   ├── p2p/                 ← identity, middleware, peers, sync_loop, merge, relay
+│   ├── store/               ← redb tables (findings, settings, sync)
+│   ├── main.rs router.rs boot.rs wiring.rs
+│   ├── mcp.rs               ← 37 MCP tools
+│   ├── audit.rs             ← the code auditor
+│   ├── proxy.rs proxy_prd.rs proxy_scan.rs   ← the owner proxy + belief
+│   ├── search.rs score.rs scorer.rs embedder.rs vector_index.rs
+│   ├── graph.rs code_chunk.rs tree.rs        ← code understanding
+│   └── session_store.rs session_handoff.rs   ← capture
+├── crates/
+│   ├── incord-rag/          ← embed + rerank, multimodal entry points
+│   ├── incord-rerank/       ← ONNX reranker (ort 2.0-rc.10)
+│   └── incord-simd/
+├── assets/owner/            ← owner.html, include_str!'d into the binary
+├── docs/
+├── deploy/
+├── Cargo.toml
+└── README.md                ← this file
 ```
-
-### Crate map of the wider tree
-
-| Workspace | Crates |
-|---|---|
-| `incord-llm-service` | `incord-llm`, `incord-rag`, `incord-rerank`, `incord-simd`, `incord-train`, `incord-tts` |
-| `agent` | `incord-api`, `incord-channels`, `incord-cli`, `incord-desktop`, `incord-extensions`, `incord-hands`, `incord-index`, `incord-kernel`, `incord-memory`, `incord-migrate`, `incord-runtime`, `incord-skills`, `incord-soul`, `incord-types`, `incord-wire` |
-| `brain` | `incord-config`, `incord-graph`, `incord-network`, `incord-payouts`, `incord-rag`, `incord-rerank`, `incord-runtime`, `incord-simd`, `incord-tools`, `twitter-engine` |
-| `server` | `incord-simd` |
-| `incord-pay-service` | `incord-pay`, `incord-pay-core` |
-
-> **Build note.** `incord-llm-service/Cargo.toml:10,15` depends only on `incord-rag`
-> and `incord-rerank` — so `crates/incord-llm` (including `gpu_inference.rs`) is
-> **not reachable from any shipped build**. Treat it as unused until that changes.
 
 ---
 
@@ -198,10 +188,8 @@ Rust, axum 0.8, tokio, redb 2. **111,104 lines** across `src/`, in **79 modules*
 | `gpu` | ❌ off | GPU embedder. Costs ~75 s at model load to compile sequence-bucket kernels. |
 
 > ⚠️ **`--features owner_push` is mandatory for any real deployment.** A plain
-> `cargo build --release` compiles Web Push *out*, silently. Source:
-> `.deploy/deploy-fix.sh:88`. The desktop sidecar builds with
-> `owner_push,gpu` (`gpu-metal` on macOS), computed at
-> `incord-dashboard/scripts/stage-sidecar.mjs:146-147`.
+> `cargo build --release` compiles Web Push *out*, silently. The desktop sidecar
+> builds with `owner_push,gpu` (`gpu-metal` on macOS).
 
 ---
 
@@ -355,20 +343,6 @@ upper bound.)
 > a *claim about meaning* — what is outstanding, what remains true — and only the
 > agent doing the work can make one. A file edit is a mechanical fact the hook
 > already observes, so it costs no model call and cannot be wrong about itself.
-
-### Desktop app — 50+ screens
-
-`incord-dashboard`, React + Tauri v2 (`@tauri-apps/api ^2.11.1`), product name
-**Incord Memory**. This engine ships as an `externalBin` sidecar.
-
-| Area | Screens |
-|---|---|
-| **Memory** | `Knowledge`, `MemoryGraph`, `Graph3D`, `Projects`, `Chat`, `ProductChat`, `ProductDoc` |
-| **Governance** | `Guard`, `Rules`, `Audit`, `Proxy`, `Skills` |
-| **Team** | `Teams`, `Network`, `Company`, `MergePanel`, `RelayDevice`, `Social` |
-| **Work** | `CodeStudio`, `AgentStudio`, `AgentFolders`, `AgentsData`, `Watchman`, `Jobs`, `Console` |
-| **Onboarding** | `FirstRun`, `GetStarted`, `Onboarding`, `Account`, `PageHelp` |
-| Subsystems | `code/`, `knowledge/`, `manthan/`, `terminal/`, `viz/` |
 
 ---
 
@@ -591,7 +565,7 @@ asking, and an answer restarts it.** Silence is self-terminating in both directi
 
 ## Storage model
 
-**redb**, embedded, single file. 39 tables.
+**redb**, embedded, single file. 41 tables.
 
 | Group | Tables |
 |---|---|
@@ -750,49 +724,30 @@ cargo test  --features owner_push               # 1,074 tests
 > Startup takes roughly **2.5 minutes** — the embedding model loads first. A short
 > timeout will look like a crash when nothing is wrong.
 
-### The desktop app
+### Shipped as a desktop sidecar
 
-```bash
-cd ../incord-dashboard
-npm run tauri:build
-# = npm run sidecar && npm run conpty && node scripts/tauri-build.mjs
-```
-
-`stage-sidecar.mjs` fingerprints this crate's source and skips the rebuild when
-nothing changed. Force it:
-
-```bash
-FORCE_SIDECAR_BUILD=1 npm run tauri:build
-```
-
-The installer lands at
-`incord-dashboard/src-tauri/target/release/bundle/nsis/Incord_Memory_<version>_x64-setup.exe`.
-
-### Deployment
-
-`.deploy/deploy-fix.sh` builds **three** services on the VPS — `server`,
-`incord-memory-service` and `incord-llm-service`. Asking for the gateway ships the
-memory service too.
+The desktop app bundles this binary as an `externalBin` sidecar and builds it with
+`--features owner_push,gpu`. The staging step fingerprints this crate's source and
+skips the rebuild when nothing changed; `FORCE_SIDECAR_BUILD=1` overrides that.
 
 The owner console (`assets/owner/owner.html`) is `include_str!`-embedded in this
-binary (`src/api/owner_feed.rs:650`) — it ships with the **engine**, not the gateway.
+binary (`src/api/owner_feed.rs:650`), so it ships with the **engine** — a deploy
+that updates only a gateway does not update the console.
 
 ---
 
-## Repository hygiene
+## Hygiene
 
-Three things in this tree are known artifact pollution and should be cleaned up:
+Two things in this crate are known artifact pollution and should be cleaned up:
 
 1. **`src/**/*.audit.bak.*`** — ~40 backup copies of source files sitting inside
    `src/`, produced by the mandatory-backup rule. They are inside the compiled
    crate's directory and they turn up in every `grep`.
 2. **`src/.backups/`** — same cause, same problem.
-3. **Root-level scratch** — ~30 `*.json` probe outputs and ~17 `build-09*.log` files
-   in the repository root, one level up.
 
-None affect the build. All three make the tree harder to read and searches noisier.
-Moving backups to a `.backups/` directory *outside* the crate would fix (1) and (2)
-without weakening the rule that creates them.
+Neither affects the build; both make the tree harder to read and searches noisier.
+Writing backups to a directory *outside* the crate would fix both without
+weakening the rule that creates them.
 
 ---
 
@@ -806,8 +761,7 @@ without weakening the rule that creates them.
 | Code auditor | ✅ shipping — per-file findings |
 | Owner proxy + belief | ✅ shipping — parts save independently |
 | P2P team sync | ✅ shipping — direct pull + relay fallback |
-| Desktop app | ✅ shipping |
-| WebSocket owner surface | 🚧 planned — `docs/owner-surface-and-websocket-plan.md` |
-| `crates/incord-llm` GPU inference | ⚠️ not reachable from any shipped build |
+| Belief hold | ✅ releases as soon as the CLI answers again |
+| WebSocket owner surface | 🚧 planned |
 
-**Test suite: 1,074 passing.**
+**Test suite: 1,076 passing.**
