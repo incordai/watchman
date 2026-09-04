@@ -287,7 +287,7 @@ Nothing in that loop needs you in it. That is the point.
 
 ## The engine
 
-Rust, axum 0.8, tokio, redb 2. **111,104 lines** across `src/`, in **79 modules**.
+Rust, axum 0.8, tokio, redb 4.2, **111,104 lines** across `src/`, in **79 modules**.
 
 ```
 incord-memory-service/
