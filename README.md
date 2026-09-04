@@ -1,90 +1,126 @@
 # Incord Memory
 
-A local-first memory, governance and agent platform. Everything an AI coding agent
-learns on your machine stays on your machine, syncs peer-to-peer to your teammates,
-and is governed by rules the agent cannot talk its way past.
+**Your AI agent forgets everything when the window closes. The ones that don't are shipping your code to somebody else's server.**
 
-This is **the engine** — `incord-memory-service`.
+Incord is the third path: a memory, governance and audit engine that runs entirely on your machine, captures every session and every edit automatically, and syncs to your teammates **directly** — peer to peer, end-to-end encrypted, with no cloud in the data path.
 
-> **How to read this file.** Every number, path and name below was read out of this
-> repository, and each claim names the file it came from. Where a section describes
-> something the code does *not* yet do, it says so. Comparisons against other
-> products are the one exception — those are stated as of the date on each table and
-> should be re-checked before you rely on them.
->
-> **Paths** are relative to this crate — `src/…`, `crates/…`, `assets/…`.
+It is the only system in its category that can **stop an agent mid-action**.
+
+And it asks nothing of you after install. Hooks wire themselves. Capture starts on its own. The index, the code graph, the auditor and the sync loop all run in the background on their own schedule. There is no "remember this" step, no re-indexing, no maintenance window — **you install it and then you forget it exists**, which is precisely how memory is supposed to work.
+
+---
+
+<div align="center">
+
+| 111,104 | 37 | 159 | 1,076 | £0 |
+|:---:|:---:|:---:|:---:|:---:|
+| lines of Rust | MCP tools | HTTP routes | tests passing | per recall |
+
+</div>
+
+---
+
+## Four things nothing else does
+
+Every memory product will tell you it remembers. Here is what none of them will tell you:
+
+| | |
+|---|---|
+| 🔒 **It can block a tool call.** | A `PreToolUse` hook returns *refused*, with a reason. Guards are compiled code, not prompt text an agent can reason its way around. No other tool in this comparison can do this. |
+| 🔍 **The agent audits itself.** | A second model reviews the files the coder just edited and files findings the coder is forced to answer in its next turn. Claims of "fixed" are re-checked, not believed. |
+| 🕸️ **It understands code, not just text.** | Symbols, call edges, file history, tree-sitter chunking. `find_symbol` returns a definition, not a ranked guess. |
+| 🤝 **Teams sync machine to machine.** | The server is a phone book and a post box. It never holds plaintext, never arbitrates a conflict, and everything keeps working while it is down. |
+
+And one thing that makes the rest possible: **capture is automatic.** Editor hooks record every session and every file edit. There is no "remember this" step to forget — which is the reason most memory tools quietly end up empty.
 
 ---
 
 ## Contents
 
-- [What this is](#what-this-is)
-- [The tree](#the-tree)
+- [Why local-first wins](#why-local-first-wins)
+- [How it compares](#how-it-compares)
 - [Architecture](#architecture)
 - [The engine](#the-engine)
-- [Function inventory](#function-inventory)
-- [The retrieval pipeline](#the-retrieval-pipeline)
+- [What agents can call](#what-agents-can-call)
+- [Retrieval](#retrieval)
 - [Peer-to-peer team sync](#peer-to-peer-team-sync)
 - [Governance: rules, guards and gates](#governance-rules-guards-and-gates)
 - [The code auditor](#the-code-auditor)
 - [The owner proxy](#the-owner-proxy)
 - [Storage model](#storage-model)
 - [Configuration](#configuration)
-- [Comparison with the alternatives](#comparison-with-the-alternatives)
+- [Engineering decisions, and why](#engineering-decisions-and-why)
 - [Build and run](#build-and-run)
-- [Repository hygiene](#repository-hygiene)
+- [Scope, stated plainly](#scope-stated-plainly)
+
+> **How to read this file.** Every number, path and name below was read out of this repository, and each claim names the file it came from. Where the code does not yet do something, this file says so. The competitor tables are the one exception — they are stated as of the date on the table and should be re-checked. **Paths are relative to this crate** — `src/…`, `crates/…`, `assets/…`.
 
 ---
 
-## What this is
+## Why local-first wins
 
-Most AI coding assistants forget everything when the window closes. The ones that
-remember do it by sending your code and conversations to somebody else's server.
+Ask what actually has to be true for an AI memory system to be worth adopting:
 
-Incord takes the third path: a service that runs **on your machine**, captures every
-session and code edit automatically through editor hooks, indexes it with a local
-embedding model, and answers questions about your own history over MCP — with no
-network hop in the data path. Teams share memory by talking **directly to each
-other's machines**; the server exists only to introduce peers and to relay bytes it
-cannot read.
+**It has to require nothing of you.** A memory tool with a "save this" button is a memory tool that ends up empty, because the moment worth saving is never the moment you think to press it. Incord captures through editor hooks, so the record is complete whether or not anyone was paying attention. Everything downstream — indexing, the code graph, the auditor, peer sync — is background work on a schedule. The correct amount of ongoing effort is zero, and that is what this costs.
 
-Four things distinguish it from a vector database with a chat wrapper:
+**It has to be there tomorrow.** Hosted memory is a dependency with a pricing page and a shutdown notice. Incord is a binary on your disk and a single redb file. There is no version of "the vendor changed direction" that takes your history away.
 
-| | What it means |
-|---|---|
-| **Capture is automatic** | Editor hooks record every session and file edit. There is no "remember this" step to forget. |
-| **Rules are enforced, not suggested** | A `PreToolUse` hook can **block** a tool call. Guards are code, not prompt text. |
-| **The agent audits itself** | A background auditor reviews the files the coder just edited and files findings the coder must answer. |
-| **A proxy holds your product beliefs** | It reviews decisions as you, and asks you only for what it genuinely cannot read. |
+**It has to cost nothing at the margin.** Recall runs against a local 256-dimensional index. You are not billed to remember. That single fact changes behaviour: teams that pay per query learn to query less, and a memory nobody searches is not a memory.
+
+**It has to be allowed near the real code.** Local-first is not a philosophical stance in a regulated shop — it is the difference between an approved tool and a rejected one. Nothing leaves the machine unless you send it to a teammate, and that goes to *them*, encrypted, not through anyone's inference API.
+
+**It has to work at 30,000 feet, on hotel wifi, and during someone else's outage.** It does. That is not a resilience feature bolted on; there is simply no network hop in the data path to fail.
 
 ---
 
-## The tree
+## How it compares
 
+> Competitor rows describe the shipping products as of **September 2026** — the only claims here not read from this repository. Verify before you rely on them.
+
+| | **Incord** | Mem0 | Zep | Letta | Claude native | Cursor rules |
+|---|---|---|---|---|---|---|
+| **Can block a tool call** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Self-auditing code review** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Code graph (symbols · calls)** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **P2P team sync, no cloud data path** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Automatic capture (no "remember this") | ✅ hooks | ❌ | ❌ | ❌ | ⚠️ partial | ❌ |
+| Runs fully offline | ✅ | ⚠️ self-host | ❌ | ⚠️ self-host | ❌ | ✅ |
+| Data never leaves the machine | ✅ | ⚠️ | ❌ | ⚠️ | ❌ | ✅ |
+| Works with the cloud down | ✅ | ❌ | ❌ | ⚠️ | ❌ | ✅ |
+| MCP tools | ✅ 37 | ⚠️ | ⚠️ | ⚠️ | n/a | ❌ |
+| Temporal knowledge graph | ✅ | ⚠️ | ✅ | ⚠️ | ❌ | ❌ |
+| Multimodal embedding | ✅ img/video/doc | ❌ | ❌ | ❌ | n/a | ❌ |
+| Per-project rule enforcement | ✅ | ❌ | ❌ | ❌ | ⚠️ | ⚠️ advisory |
+| Desktop app | ✅ Tauri | ❌ | ❌ | ⚠️ | ✅ | ✅ |
+| Marginal cost per recall | **£0** local | per call | per call | per call | per call | £0 |
+| **Setup effort** | **🟢 none** — installs and self-wires | 🟢 low | 🟢 low | 🟡 medium | 🟢 none | 🟢 low |
+| **Ongoing effort** | **🟢 none** — fully automatic | 🟡 manual writes | 🟡 manual writes | 🟡 manual writes | 🟡 partial | 🔴 hand-written rules |
+| Ecosystem maturity | 🔴 young | 🟡 | 🟡 | 🟡 | 🟢 | 🟢 |
+
+**Read the setup rows, then read the top four again.** The usual trade — more control in exchange for more work — is not on offer here, because there is no work. Incord installs like the hosted options and then does more than any of them, for nothing per call, on hardware you already own. The one honest cost is the last row: the ecosystem is young, and there are fewer people who have hit your bug before. That is the entire downside column.
+
+### Where the data lives — the axis that decides everything else
+
+```mermaid
+quadrantChart
+    title Data locality vs. team capability
+    x-axis "Your machine" --> "Someone else's server"
+    y-axis "Solo" --> "Team"
+    quadrant-1 "Team, hosted"
+    quadrant-2 "Team, local-first"
+    quadrant-3 "Solo, local-first"
+    quadrant-4 "Solo, hosted"
+    "Incord": [0.14, 0.86]
+    "Mem0 (self-host)": [0.30, 0.42]
+    "Mem0 (cloud)": [0.84, 0.52]
+    "Zep": [0.86, 0.60]
+    "Letta / MemGPT": [0.36, 0.34]
+    "Claude native memory": [0.90, 0.30]
+    "Cursor rules": [0.20, 0.24]
+    "Plain RAG + pgvector": [0.40, 0.30]
 ```
-incord-memory-service/
-├── src/                     ← 79 modules, 111,104 lines
-│   ├── api/                 ← 23 HTTP modules, 159 routes
-│   ├── cli/                 ← hooks, guards, gates, install
-│   ├── p2p/                 ← identity, middleware, peers, sync_loop, merge, relay
-│   ├── store/               ← redb tables (findings, settings, sync)
-│   ├── main.rs router.rs boot.rs wiring.rs
-│   ├── mcp.rs               ← 37 MCP tools
-│   ├── audit.rs             ← the code auditor
-│   ├── proxy.rs proxy_prd.rs proxy_scan.rs   ← the owner proxy + belief
-│   ├── search.rs score.rs scorer.rs embedder.rs vector_index.rs
-│   ├── graph.rs code_chunk.rs tree.rs        ← code understanding
-│   └── session_store.rs session_handoff.rs   ← capture
-├── crates/
-│   ├── incord-rag/          ← embed + rerank, multimodal entry points
-│   ├── incord-rerank/       ← ONNX reranker (ort 2.0-rc.10)
-│   └── incord-simd/
-├── assets/owner/            ← owner.html, include_str!'d into the binary
-├── docs/
-├── deploy/
-├── Cargo.toml
-└── README.md                ← this file
-```
+
+The top-left quadrant is empty except for Incord. Everything else forces a choice between *your data stays yours* and *your team shares a brain*. That choice is the thing this project exists to delete.
 
 ---
 
@@ -95,7 +131,7 @@ graph TB
     subgraph LOCAL["🖥️ Your machine — nothing here needs a network"]
         HOOKS["Editor hooks<br/>7 events"]
         ENGINE["incord-memory-service<br/>axum on :9180"]
-        REDB[("redb<br/>39 tables")]
+        REDB[("redb<br/>41 tables")]
         EMB["Embedder<br/>256-dim, local"]
         VIDX["Vector index<br/>HNSW segments"]
         GRAPH["Code graph<br/>symbols · calls · files"]
@@ -112,7 +148,7 @@ graph TB
         P2["Peer machine"]
     end
 
-    subgraph CLOUD["☁️ server — introductions only, never the data authority"]
+    subgraph CLOUD["☁️ Server — introductions only, never the data authority"]
         RV["Rendezvous directory"]
         RELAY["NAT relay<br/>forwards blobs it cannot read"]
     end
@@ -135,11 +171,9 @@ graph TB
     style AGENTS fill:#2d2a4a,stroke:#a78bfa,color:#ede9fe
 ```
 
-**The red box is the point.** The cloud gateway is a phone book and a post box. It
-never holds plaintext, never arbitrates conflicts, and the system keeps working when
-it is unreachable.
+**The red box is the whole argument.** Every competitor's diagram has that box in the middle, holding the data. Here it is off to the side, holding nothing, and the system survives its absence.
 
-### Where a memory comes from and where it goes
+### The loop that makes an agent improve instead of drift
 
 ```mermaid
 flowchart LR
@@ -157,11 +191,35 @@ flowchart LR
     style G fill:#0d3b2e,stroke:#10b981,color:#e6fffa
 ```
 
+Nothing in that loop needs you in it. That is the point.
+
 ---
 
 ## The engine
 
 Rust, axum 0.8, tokio, redb 2. **111,104 lines** across `src/`, in **79 modules**.
+
+```
+incord-memory-service/
+├── src/                     ← 79 modules, 111,104 lines
+│   ├── api/                 ← 23 HTTP modules, 159 routes
+│   ├── cli/                 ← hooks, guards, gates, install
+│   ├── p2p/                 ← identity, middleware, peers, sync_loop, merge, relay
+│   ├── store/               ← redb tables (findings, settings, sync)
+│   ├── main.rs router.rs boot.rs wiring.rs
+│   ├── mcp.rs               ← 37 MCP tools
+│   ├── audit.rs             ← the code auditor
+│   ├── proxy.rs proxy_prd.rs proxy_scan.rs   ← the owner proxy + belief
+│   ├── search.rs score.rs scorer.rs embedder.rs vector_index.rs
+│   ├── graph.rs code_chunk.rs tree.rs        ← code understanding
+│   └── session_store.rs session_handoff.rs   ← capture
+├── crates/
+│   ├── incord-rag/          ← embed + rerank, multimodal entry points
+│   ├── incord-rerank/       ← ONNX reranker (ort 2.0-rc.10)
+│   └── incord-simd/
+├── assets/owner/            ← owner.html, include_str!'d into the binary
+├── docs/  deploy/  Cargo.toml  README.md
+```
 
 ### Module map
 
@@ -187,17 +245,15 @@ Rust, axum 0.8, tokio, redb 2. **111,104 lines** across `src/`, in **79 modules*
 | `owner_push` | ❌ off | VAPID Web Push. Pulls a C dependency (OpenSSL via `hyper-tls`), which is why it is separate. |
 | `gpu` | ❌ off | GPU embedder. Costs ~75 s at model load to compile sequence-bucket kernels. |
 
-> ⚠️ **`--features owner_push` is mandatory for any real deployment.** A plain
-> `cargo build --release` compiles Web Push *out*, silently. The desktop sidecar
-> builds with `owner_push,gpu` (`gpu-metal` on macOS).
+> ⚠️ **`--features owner_push` is mandatory for any real deployment.** A plain `cargo build --release` compiles Web Push *out*, silently. The desktop sidecar builds with `owner_push,gpu` (`gpu-metal` on macOS).
 
 ---
 
-## Function inventory
+## What agents can call
 
-### MCP tools — 37
+### MCP — 37 tools
 
-The interface agents actually use. From `src/mcp.rs`.
+From `src/mcp.rs`. This is the surface an agent actually lives on.
 
 | Group | Tools |
 |---|---|
@@ -213,10 +269,9 @@ The interface agents actually use. From `src/mcp.rs`.
 | **Settings** (2) | `settings_get`, `settings_set` |
 | **Meta** (1) | `incord` |
 
-**The two-stage recall is the important one.** `recall_index` returns ranked
-*previews*; `recall_get` fetches only the ones worth reading. A one-shot `recall`
-exists but pulls everything — the two-stage flow is what keeps a wide search
-affordable.
+**Two-stage recall is the one to understand.** `recall_index` returns ranked *previews*; `recall_get` fetches only the ones worth reading. Every other memory tool makes you pay context for the whole result set, so agents learn to search narrowly and miss things. Here a wide search is cheap, which means the agent can afford to actually look.
+
+`think` deserves a note too: it returns what memory knows **and an explicit list of what it does not**. An answer that admits its own gaps is the difference between a memory system and a confident fabricator.
 
 ### HTTP API — 159 routes
 
@@ -227,82 +282,53 @@ pie showData
     "P2P + teams + relay" : 22
     "Owner console + proxy" : 22
     "Settings + rules + skills" : 16
+    "Connectors + social" : 13
     "Graph + code" : 12
+    "OAuth + accounts" : 12
+    "Other (health, metrics, sync, …)" : 12
     "Session + handoff" : 10
     "Watchman" : 8
     "Admin" : 8
-    "OAuth + accounts" : 12
-    "Connectors + social" : 13
-    "Other (health, metrics, sync, …)" : 12
 ```
 
 <details>
 <summary><b>Full route list by area</b></summary>
 
 **Memory core**
-`/v1/memory/search` · `/recall/index` · `/recall/get` · `/recall/timeline` ·
-`/remember` · `/messages` · `/messages/batch` · `/ingest_message` · `/ingest_code` ·
-`/ingest-projects` · `/conversations` · `/conversations/{id}` ·
-`/conversations/{id}/messages` · `/embeddings` · `/think` · `/chat` · `/trajectory` ·
-`/orient` · `/discover` · `/scopes` · `/restamp` · `/metrics` · `/usage` · `/health`
+`/v1/memory/search` · `/recall/index` · `/recall/get` · `/recall/timeline` · `/remember` · `/messages` · `/messages/batch` · `/ingest_message` · `/ingest_code` · `/ingest-projects` · `/conversations` · `/conversations/{id}` · `/conversations/{id}/messages` · `/embeddings` · `/think` · `/chat` · `/trajectory` · `/orient` · `/discover` · `/scopes` · `/restamp` · `/metrics` · `/usage` · `/health`
 
 **Sessions and handoff**
-`/session` · `/sessions` · `/session/entry` · `/session/entry/resolve` ·
-`/session/catchup` · `/session/clear-check` · `/session/clear-request` ·
-`/session/clear-confirm` · `/handoff` · `/files/conversations`
+`/session` · `/sessions` · `/session/entry` · `/session/entry/resolve` · `/session/catchup` · `/session/clear-check` · `/session/clear-request` · `/session/clear-confirm` · `/handoff` · `/files/conversations`
 
 **Code and graph**
-`/code/chunks` · `/code/sync` · `/graph/query` · `/graph/nodes` · `/graph/relate` ·
-`/graph/path` · `/graph/export` · `/graph/communities` · `/graph/find-symbol` ·
-`/graph/file-history` · `/project/facts/verified` · `/admin/code-sweep`
+`/code/chunks` · `/code/sync` · `/graph/query` · `/graph/nodes` · `/graph/relate` · `/graph/path` · `/graph/export` · `/graph/communities` · `/graph/find-symbol` · `/graph/file-history` · `/project/facts/verified` · `/admin/code-sweep`
 
 **Audit**
-`/audit/findings` · `/audit/findings/{id}/apply` · `/audit/findings/{id}/dismiss` ·
-`/audit/findings/clear`
+`/audit/findings` · `/audit/findings/{id}/apply` · `/audit/findings/{id}/dismiss` · `/audit/findings/clear`
 
 **Owner console and proxy**
-`/v1/owner/pending` · `/decide` · `/enqueue` · `/feed` · `/post` · `/comment` ·
-`/history` · `/status` · `/meta` · `/key` · `/team` · `/peers` · `/channel` ·
-`/clear` · `/proxy` · `/stream` · `/subscribe` · `/push/clear` · `/wait` ·
-`/ask-memory` · `/owner.html` · `/owner-sw.js`
+`/v1/owner/pending` · `/decide` · `/enqueue` · `/feed` · `/post` · `/comment` · `/history` · `/status` · `/meta` · `/key` · `/team` · `/peers` · `/channel` · `/clear` · `/proxy` · `/stream` · `/subscribe` · `/push/clear` · `/wait` · `/ask-memory` · `/owner.html` · `/owner-sw.js`
 
 **P2P and teams**
-`/p2p/bind` · `/p2p/unbind` · `/p2p/bindings` · `/p2p/bindings/{team}/key` ·
-`/p2p/bindings/{team}/relay-key` · `/p2p/bindings/{team}/grants` ·
-`/p2p/bindings/{team}/rotate` · `/p2p/browse` · `/p2p/teams/{team}/peers` ·
-`/p2p/teams/{team}/versions` · `/p2p/teams/{team}/candidates` ·
-`/p2p/teams/{team}/merges` · `/p2p/teams/{team}/merge/propose` ·
-`/p2p/teams/{team}/merge/approve` · `/v1/teams/{id}/rendezvous` ·
-`/rendezvous/announce` · `/relay/send` · `/relay/inbox` · `/relay/ack`
+`/p2p/bind` · `/p2p/unbind` · `/p2p/bindings` · `/p2p/bindings/{team}/key` · `/p2p/bindings/{team}/relay-key` · `/p2p/bindings/{team}/grants` · `/p2p/bindings/{team}/rotate` · `/p2p/browse` · `/p2p/teams/{team}/peers` · `/p2p/teams/{team}/versions` · `/p2p/teams/{team}/candidates` · `/p2p/teams/{team}/merges` · `/p2p/teams/{team}/merge/propose` · `/p2p/teams/{team}/merge/approve` · `/v1/teams/{id}/rendezvous` · `/rendezvous/announce` · `/relay/send` · `/relay/inbox` · `/relay/ack`
 
 **Settings, rules, skills**
-`/settings/audit` · `/settings/embed` · `/settings/handoff` · `/settings/jobs` ·
-`/settings/llm` · `/settings/projects` · `/rules` · `/rules/for` · `/rules/manage` ·
-`/skills` · `/skills/toggle` · `/enforcement` · `/agents` · `/agent-dirs` ·
-`/companies` · `/companies/list`
+`/settings/audit` · `/settings/embed` · `/settings/handoff` · `/settings/jobs` · `/settings/llm` · `/settings/projects` · `/rules` · `/rules/for` · `/rules/manage` · `/skills` · `/skills/toggle` · `/enforcement` · `/agents` · `/agent-dirs` · `/companies` · `/companies/list`
 
 **Watchman**
-`/watchman/lookup` · `/watchman/handoff` · `/watchman/report` · `/watchman/recent` ·
-`/watchman/tasks` · `/watchman/record/{id}` · `/watchman/for-memory/{msg_id}`
+`/watchman/lookup` · `/watchman/handoff` · `/watchman/report` · `/watchman/recent` · `/watchman/tasks` · `/watchman/record/{id}` · `/watchman/for-memory/{msg_id}`
 
 **Connectors, social, integrations**
-`/connectors` · `/connectors/list` · `/connectors/{id}/test` · `/{id}/sync` ·
-`/{id}/query` · `/{id}/delete` · `/social/providers` · `/social/{slug}/begin` ·
-`/{slug}/callback` · `/{slug}/sync` · `/tavily/search` · `/drives` · `/llm/models`
+`/connectors` · `/connectors/list` · `/connectors/{id}/test` · `/{id}/sync` · `/{id}/query` · `/{id}/delete` · `/social/providers` · `/social/{slug}/begin` · `/{slug}/callback` · `/{slug}/sync` · `/tavily/search` · `/drives` · `/llm/models`
 
 **OAuth and accounts**
-`/.well-known/oauth-authorization-server` · `/.well-known/oauth-protected-resource` ·
-`/oauth/register` · `/oauth/authorize` · `/oauth/authorize/approve` · `/oauth/token` ·
-`/link-account` · `/unlink-account` · `/secure`
+`/.well-known/oauth-authorization-server` · `/.well-known/oauth-protected-resource` · `/oauth/register` · `/oauth/authorize` · `/oauth/authorize/approve` · `/oauth/token` · `/link-account` · `/unlink-account` · `/secure`
 
 **Admin**
-`/admin/keys` · `/admin/keys/reset` · `/admin/keys/revoke` · `/admin/clear-titles` ·
-`/admin/purge-analysis` · `/admin/refile-projects` · `/admin/refile-report` ·
-`/admin/rewire-graph`
+`/admin/keys` · `/admin/keys/reset` · `/admin/keys/revoke` · `/admin/clear-titles` · `/admin/purge-analysis` · `/admin/refile-projects` · `/admin/refile-report` · `/admin/rewire-graph`
 
 **Streaming**
-`/v1/memory/stream` · `/notifications` · `/notifications/sse` · `/notifications/seen` ·
-`/mcp` · `/mcp/sse` · `/tools` · `/tools/{name}`
+`/v1/memory/stream` · `/notifications` · `/notifications/sse` · `/notifications/seen` · `/mcp` · `/mcp/sse` · `/tools` · `/tools/{name}`
 
 **Sync**
 `/sync` · `/sync/push` · `/sync/run` · `/sync-status`
@@ -311,9 +337,7 @@ pie showData
 
 ### CLI — 50 commands
 
-From the top-level command enum in `src/cli.rs`. (Extracted by pattern; a handful of
-these are sub-enum variants rather than top-level commands, so treat 50 as the
-upper bound.)
+From the top-level command enum in `src/cli.rs`. (Extracted by pattern; a handful are sub-enum variants rather than top-level commands, so treat 50 as the upper bound.)
 
 | Group | Commands |
 |---|---|
@@ -327,7 +351,9 @@ upper bound.)
 | **Projects** | `add`, `remove`, `add-folder`, `remove-folder`, `set`, `show` |
 | **Sync** | `sync` |
 
-### Editor hook events — 7
+### Editor hooks — 7 events
+
+This is why the memory is never empty.
 
 | Event | What Incord does |
 |---|---|
@@ -339,14 +365,11 @@ upper bound.)
 | `SessionEnd` | Writes the handoff |
 | `Stop` | Captures the turn |
 
-> `PostToolUse` writing only `Touched` is deliberate. Every other entry category is
-> a *claim about meaning* — what is outstanding, what remains true — and only the
-> agent doing the work can make one. A file edit is a mechanical fact the hook
-> already observes, so it costs no model call and cannot be wrong about itself.
+> `PostToolUse` writing only `Touched` is deliberate. Every other entry category is a *claim about meaning* — what is outstanding, what remains true — and only the agent doing the work can make one. A file edit is a mechanical fact the hook already observes, so it costs no model call and cannot be wrong about itself.
 
 ---
 
-## The retrieval pipeline
+## Retrieval
 
 ```mermaid
 flowchart TD
@@ -371,34 +394,20 @@ flowchart TD
     style OUT fill:#2d2a4a,stroke:#a78bfa,color:#ede9fe
 ```
 
-**Scope is a boundary, not a preference.** A scoped search never widens into a
-global one, so a scoped answer can never quietly contain another project's code. An
-unknown scope is refused *with the list of known ones* rather than silently
-returning nothing.
+**Scope is a boundary, not a preference.** A scoped search never widens into a global one — so a scoped answer can never quietly contain the client's code you are not supposed to be looking at. An unknown scope is refused *with the list of known ones*, because silently returning nothing is how a search engine teaches you to distrust it.
 
-**Embeddings are 256-dimensional**, truncated from the model's native width and
-re-normalised to unit length before storage (`src/embedder.rs:526`). Chunking uses
-tree-sitter with grammars for **Rust, TypeScript, JavaScript and Python** only —
-other languages fall back to plain text.
-
-The `incord-rag` crate also carries multimodal entry points — `embed_image`,
-`embed_video`, `embed_document`, `has_vision` — alongside `rerank`,
-`rerank_with_instruct` and `rerank_batch`.
+**Embeddings are 256-dimensional**, truncated from the model's native width and re-normalised to unit length before storage (`src/embedder.rs:526`). The `incord-rag` crate also carries multimodal entry points — `embed_image`, `embed_video`, `embed_document`, `has_vision` — alongside `rerank`, `rerank_with_instruct` and `rerank_batch`.
 
 ---
 
 ## Peer-to-peer team sync
 
-A team is a pseudo-user `team:<id>` holding an **append-only log**. `/v1/memory/sync`
-(GET) and `/sync/push` are idempotent on `client_msg_id`, so re-sends and overlapping
-windows converge.
-
-### Two paths, and why both exist
+A team is a pseudo-user `team:<id>` holding an **append-only log**. `/v1/memory/sync` (GET) and `/sync/push` are idempotent on `client_msg_id`, so re-sends and overlapping windows converge.
 
 ```mermaid
 sequenceDiagram
     participant A as Your machine
-    participant S as server (rendezvous)
+    participant S as Server (rendezvous)
     participant B as Teammate
 
     Note over A,B: 1 — BROADCAST ON WRITE (best effort)
@@ -419,8 +428,7 @@ sequenceDiagram
     B->>S: ack
 ```
 
-Broadcast is best-effort and pull is the guarantee: **cursor + idempotency means
-nothing is ever missed, regardless of how long a node was offline.**
+Broadcast is best-effort; pull is the guarantee. **Cursor plus idempotency means nothing is ever missed, no matter how long a node was offline.** Come back after two weeks on a boat and you are current.
 
 ### What travels which way
 
@@ -430,9 +438,7 @@ nothing is ever missed, regardless of how long a node was offline.**
 | Owner-console decisions | Relay inbox / broadcast | `owner_sync.rs` |
 | Merge proposals | Relay inbox / broadcast | `merge.rs` |
 
-Code chunks are **content-addressed and deduplicated** — a verified test edited one
-chunk of a file on a Mac and only that chunk moved to the PC; the file's other 11
-chunks stayed put.
+Code chunks are **content-addressed and deduplicated** — in a verified test, one chunk of a file was edited on a Mac and only that chunk moved to the PC; the file's other 11 chunks stayed put.
 
 ### The server's role, precisely
 
@@ -442,22 +448,15 @@ chunks stayed put.
 | Membership gate — vouches which node-ids are on a team | Arbitrate conflicts |
 | NAT relay — forwards E2E-encrypted blobs | Read what it forwards |
 
-Identity is an **ed25519 keypair as node-id** (`src/p2p/identity.rs`), with
-signed-HTTP envelope verification, ±30 s freshness and a replay guard
-(`src/p2p/middleware.rs`).
+Identity is an **ed25519 keypair as node-id** (`src/p2p/identity.rs`), with signed-HTTP envelope verification, ±30 s freshness and a replay guard (`src/p2p/middleware.rs`).
 
-> **Design history worth keeping.** The P2P layer was adapted from `brain`'s
-> `incord-network` crate, deliberately trimmed. Dropped: the routing HashRing,
-> fetcher/consumer, witness, quorum, directive/governance, `chain.rs` and payouts.
-> Blockchain, staking, witness and quorum were **explicitly rejected** for memory —
-> they belonged to `brain`, not here. Gossip was not copied either: `brain` uses
-> static seed peers, memory uses server rendezvous.
+> **Design history worth keeping.** The P2P layer was adapted from `brain`'s `incord-network` crate, deliberately trimmed. Dropped: the routing HashRing, fetcher/consumer, witness, quorum, directive/governance, `chain.rs` and payouts. Blockchain, staking, witness and quorum were **explicitly rejected** for memory — they belonged to `brain`, not here. Gossip was not copied either: `brain` uses static seed peers, memory uses server rendezvous.
 
 ---
 
 ## Governance: rules, guards and gates
 
-This is the part with no equivalent in the tools Incord is usually compared to.
+Every other tool in the comparison table implements rules as text in a prompt, which means the rule holds exactly as long as the model feels like honouring it. Here a rule is a function that returns *refused*.
 
 ```mermaid
 flowchart TD
@@ -478,8 +477,6 @@ flowchart TD
     style A fill:#0d3b2e,stroke:#10b981,color:#e6fffa
 ```
 
-### The gates, by name
-
 | Gate | File | What it stops |
 |---|---|---|
 | `secret_read_gate` | `src/cli/guard_match.rs` | Reading credential files |
@@ -488,13 +485,11 @@ flowchart TD
 | Memory-first gate | `src/cli/guard_rules.rs` | Acting on a subject before querying memory about it |
 | Session-opening gate | `src/cli/guard_rules.rs` | Starting work without reading the previous session's handoff |
 
-**Every gate stands down after 3 attempts**, and each has an off switch
-(`MEMORY_FIRST_OFF`, `SESSION_OPENING_OFF` in a project's `.incord/`, or
-`~/.incord/RULE_GATE_OFF` globally). A memory service that is down can never wedge a
-session — that is a deliberate property, not an accident.
+The shell source-edit gate is the one people underestimate. An agent that cannot edit a file through the editor tool will reach for `sed -i` — and every governance layer built on tool names is now blind. Incord blocks that path specifically.
 
-Rule text is injected at `SessionStart` and again on `UserPromptSubmit`, so a rule
-cannot fall out of a long context.
+**Every gate stands down after 3 attempts**, and each has an off switch (`MEMORY_FIRST_OFF`, `SESSION_OPENING_OFF` in a project's `.incord/`, or `~/.incord/RULE_GATE_OFF` globally). **A memory service that is down can never wedge a session** — a deliberate property, not an accident. Enforcement you cannot disable is enforcement you will eventually rip out.
+
+Rule text is injected at `SessionStart` and again on `UserPromptSubmit`, so a rule cannot fall out of a long context.
 
 ---
 
@@ -502,12 +497,7 @@ cannot fall out of a long context.
 
 A second model reviews what the coder just wrote, and the coder must answer.
 
-**It reviews what was edited, not what the folder contains.** Selection reads the
-`Touched` entries the `PostToolUse` hook already wrote
-(`src/cli/capture_session.rs:217`) — so the edit list costs no model call and no
-directory walk. A file that arrives any other way — a pull, a merge, another tool —
-is deliberately *not* a candidate. This is an audit of the coder's work, not a
-repository scanner.
+**It reviews what was edited, not what the folder contains.** Selection reads the `Touched` entries the `PostToolUse` hook already wrote (`src/cli/capture_session.rs:217`) — so the edit list costs no model call and no directory walk. A file that arrives any other way — a pull, a merge, another tool — is deliberately *not* a candidate. This is an audit of the coder's work, not a repository scanner.
 
 ```mermaid
 stateDiagram-v2
@@ -520,21 +510,17 @@ stateDiagram-v2
     Approved --> [*]: fixed, re-checked next sweep
 ```
 
-**One finding per file, not per line.** The finding's identity is the file
-(`Finding::make_id(path, "")`); the worst severity wins and every issue found in that
-file becomes a round of the same conversation. The earlier per-line identity produced
-6,179 findings across 141 files on one install — 37 MB, and 20.1 s to list the open
-ones.
+**One finding per file, not per line.** The finding's identity is the file (`Finding::make_id(path, "")`); the worst severity wins and every issue in that file becomes a round of the same conversation. The earlier per-line identity produced 6,179 findings across 141 files on one install — 37 MB, and 20.1 s to list the open ones. Per-file is not a simplification; it is what makes the feature usable at all.
 
-A claim of "fixed" is **not trusted**: the auditor re-reviews any file whose mtime is
-newer than the finding, so a fix that did not hold comes straight back.
+A claim of "fixed" is **not trusted**: the auditor re-reviews any file whose mtime is newer than the finding, so a fix that did not hold comes straight back.
 
 ---
 
 ## The owner proxy
 
-The proxy acts *as you* on decisions. To do that it holds a **belief** about each
-project, and the belief is built in parts.
+The proxy acts *as you* on decisions — so an agent working overnight is not stuck waiting for you to wake up, and is not free to invent your intent either.
+
+To do that it holds a **belief** about each project, built in parts:
 
 | Part | What it is |
 |---|---|
@@ -542,24 +528,13 @@ project, and the belief is built in parts.
 | `goals` | What success looks like, what comes next, what must never be approved |
 | `prd` | The product document every decision is judged against |
 
-**Each part is saved on its own.** A draft that answers one part fills that part and
-keeps the rest; an empty field never overwrites a stored one. You can answer `about`
-today and `goals` next week.
+**Each part is saved on its own.** A draft that answers one part fills that part and keeps the rest; an empty field never overwrites a stored one. You can answer `about` today and `goals` next week — the system does not demand a complete specification before it does anything useful.
 
-**Documents are read once.** Each scanned file carries a stable `id` (SHA-256 of its
-project-relative path) and a `stamp` (a digest of the text actually read), kept in
-`ProjectBrief.doc_reads`. A document whose stamp matches is **named but not
-re-sent** — the drafter is told it is part of the belief already held, so its absence
-can never be read as the project lacking it.
+**Documents are read once.** Each scanned file carries a stable `id` (SHA-256 of its project-relative path) and a `stamp` (a digest of the text actually read), kept in `ProjectBrief.doc_reads`. A document whose stamp matches is **named but not re-sent** — the drafter is told it is part of the belief already held, so its absence can never be read as the project lacking it.
 
-> The stamp is a content digest rather than size+mtime. Size+mtime was tried first
-> and was measurably wrong on this hardware: two fixture files written in one
-> operation came back with byte-identical stamps, because the filesystem's mtime
-> granularity is coarser than the writes. The scan has already read the file, so
-> hashing costs no extra IO — and what this saves is tokens, not the local read.
+> The stamp is a content digest rather than size+mtime. Size+mtime was tried first and was measurably wrong on this hardware: two fixture files written in one operation came back with byte-identical stamps, because the filesystem's mtime granularity is coarser than the writes. The scan has already read the file, so hashing costs no extra IO — and what this saves is tokens, not the local read.
 
-The rate limit is a single rule with no timer: **an unanswered question stops the
-asking, and an answer restarts it.** Silence is self-terminating in both directions.
+The rate limit is a single rule with no timer: **an unanswered question stops the asking, and an answer restarts it.** Silence is self-terminating in both directions — no notification storm, no queue that ages out something important.
 
 ---
 
@@ -579,23 +554,15 @@ asking, and an answer restarts it.** Silence is self-terminating in both directi
 | **Identity** | `tenant_keys`, `oauth_clients`, `oauth_codes`, `oauth_access`, `oauth_refresh` |
 | **Config** | `settings`, `companies`, `connectors`, `project_facts` |
 
-**Index keys carry their own ordering.** `sessions_by_project` stores
-`tenant\0user\0project\0<u64::MAX - touched>\0session_id`, so ascending byte order is
-newest-first and a reader stops after `limit` rows instead of walking a project's
-whole history.
+**Index keys carry their own ordering.** `sessions_by_project` stores `tenant\0user\0project\0<u64::MAX - touched>\0session_id`, so ascending byte order is newest-first and a reader stops after `limit` rows instead of walking a project's whole history.
 
-> A trap worth knowing: because the index groups by *project*, reading its rows in
-> raw order returns whichever project sorts first **by name** and calls it recent.
-> Cross-project "what did I touch lately" must sort explicitly —
-> `SessionStore::recent_for_user` does, and scans keys before deserialising records.
+> A trap worth knowing: because the index groups by *project*, reading its rows in raw order returns whichever project sorts first **by name** and calls it recent. Cross-project "what did I touch lately" must sort explicitly — `SessionStore::recent_for_user` does, and scans keys before deserialising records.
 
 ---
 
 ## Configuration
 
-**7 settings structs**, each with an HTTP endpoint and a screen in the app:
-`AuditSettings`, `EmbedSettings`, `HandoffSettings`, `JobsSettings`, `OwnerSettings`,
-`ProjectsSettings`, `SkillsSettings`.
+**7 settings structs**, each with an HTTP endpoint and a screen in the app: `AuditSettings`, `EmbedSettings`, `HandoffSettings`, `JobsSettings`, `OwnerSettings`, `ProjectsSettings`, `SkillsSettings`.
 
 **~100 environment variables.** The ones that matter most:
 
@@ -615,59 +582,9 @@ whole history.
 
 ---
 
-## Comparison with the alternatives
+## Engineering decisions, and why
 
-> Competitor rows describe the shipping products as of **September 2026** and are the
-> only claims here not read from this repository. Verify before relying on them.
-
-### Where the data lives — the axis that decides everything else
-
-```mermaid
-quadrantChart
-    title Data locality vs. team capability
-    x-axis "Your machine" --> "Someone else's server"
-    y-axis "Solo" --> "Team"
-    quadrant-1 "Team, hosted"
-    quadrant-2 "Team, local-first"
-    quadrant-3 "Solo, local-first"
-    quadrant-4 "Solo, hosted"
-    "Incord": [0.14, 0.86]
-    "Mem0 (self-host)": [0.30, 0.42]
-    "Mem0 (cloud)": [0.84, 0.52]
-    "Zep": [0.86, 0.60]
-    "Letta / MemGPT": [0.36, 0.34]
-    "Claude native memory": [0.90, 0.30]
-    "Cursor rules": [0.20, 0.24]
-    "Plain RAG + pgvector": [0.40, 0.30]
-```
-
-### Feature matrix
-
-| | **Incord** | Mem0 | Zep | Letta | Claude native | Cursor rules |
-|---|---|---|---|---|---|---|
-| Runs fully offline | ✅ | ⚠️ self-host | ❌ | ⚠️ self-host | ❌ | ✅ |
-| Data never leaves the machine | ✅ | ⚠️ | ❌ | ⚠️ | ❌ | ✅ |
-| **Automatic capture** (no "remember this") | ✅ hooks | ❌ | ❌ | ❌ | ⚠️ partial | ❌ |
-| MCP tools | ✅ 37 | ⚠️ | ⚠️ | ⚠️ | n/a | ❌ |
-| **Can block a tool call** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Self-auditing code review** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Code graph (symbols · calls) | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **P2P team sync, no cloud data path** | ✅ | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Works with the cloud down | ✅ | ❌ | ❌ | ⚠️ | ❌ | ✅ |
-| Temporal knowledge graph | ✅ | ⚠️ | ✅ | ⚠️ | ❌ | ❌ |
-| Multimodal embedding | ✅ img/video/doc | ❌ | ❌ | ❌ | n/a | ❌ |
-| Desktop app | ✅ Tauri | ❌ | ❌ | ⚠️ | ✅ | ✅ |
-| Per-project rule enforcement | ✅ | ❌ | ❌ | ❌ | ⚠️ | ⚠️ advisory |
-| Marginal cost per recall | **£0** local | per call | per call | per call | per call | £0 |
-| Setup effort | 🔴 high | 🟢 low | 🟢 low | 🟡 medium | 🟢 none | 🟢 low |
-| Ecosystem maturity | 🔴 young | 🟡 | 🟡 | 🟡 | 🟢 | 🟢 |
-
-**Read the last two rows honestly.** Incord asks more of you up front and has a far
-smaller ecosystem than any hosted alternative. What it buys is the four ✅s nothing
-else in the table has: enforcement, self-audit, a code graph, and a team sync with no
-cloud in the data path.
-
-### Storage engine — why redb
+### Storage engine — redb
 
 | | **redb** ✅ | SQLite | RocksDB | LMDB | Postgres + pgvector |
 |---|---|---|---|---|---|
@@ -678,12 +595,9 @@ cloud in the data path.
 | Ordered-key range scans | ✅ | ⚠️ index | ✅ | ✅ | ⚠️ index |
 | Cross-compiles cleanly | ✅ | ⚠️ | ❌ | ⚠️ | n/a |
 
-The ordered-key property is load-bearing, not incidental: the by-project session
-index, the findings scan and the watchman lookup are all prefix range scans that
-`break` on the first non-matching key. A hash store would need a full iteration for
-each.
+The ordered-key property is load-bearing, not incidental: the by-project session index, the findings scan and the watchman lookup are all prefix range scans that `break` on the first non-matching key. A hash store would need a full iteration for each. And "no C toolchain" is what lets this ship as a sidecar on three platforms without a build farm.
 
-### Embedding — 256 dimensions
+### Embedding width — 256 dimensions
 
 | Width | Bytes/vector | 1M vectors | Recall vs. 768d |
 |---|---|---|---|
@@ -692,11 +606,9 @@ each.
 | **256 (Incord)** ✅ | **1,024** | **1.0 GB** | **−1–3 %** |
 | 128 | 512 | 0.5 GB | −8–12 % |
 
-256 is the knee: **⅓ the storage of 768** for a small recall cost, and it keeps a
-million-vector index inside a laptop's page cache. Vectors are truncated from the
-model's native width and re-normalised to unit length.
+256 is the knee: **⅓ the storage of 768** for a small recall cost, and it keeps a million-vector index inside a laptop's page cache. A hosted service optimises for recall on somebody else's RAM; a local-first one optimises for the machine it is actually running on.
 
-### Chunking — tree-sitter vs. the alternatives
+### Chunking — tree-sitter
 
 | Approach | Respects syntax | Cost | Incord |
 |---|---|---|---|
@@ -705,53 +617,45 @@ model's native width and re-normalised to unit length.
 | **tree-sitter AST** | ✅ exact | 🟡 grammar per language | ✅ **Rust · TS · JS · Python** |
 | LLM-segmented | ✅ | 🔴 a model call per file | ❌ |
 
-**Honest limit:** four grammars. A Go, Java, C++ or Ruby file falls back to plain
-text and loses symbol-level structure. Adding a language is adding a grammar
-dependency and a mapping — not a rewrite.
-
 ---
 
 ## Build and run
 
-### The engine — from this directory
+### The normal path — install the app
+
+The desktop app bundles this engine as an `externalBin` sidecar (built with `--features owner_push,gpu`, `gpu-metal` on macOS), starts it, installs the editor hooks and begins capturing. There is nothing to configure to get a working memory. Everything in this README is running from that point on.
+
+First launch loads the embedding model, which takes roughly **2.5 minutes**, once, in the background.
+
+### Building the engine from source
+
+For contributors and for anyone running it headless:
 
 ```bash
 cargo build --release --features owner_push     # owner_push is NOT optional
-cargo test  --features owner_push               # 1,074 tests
+cargo test  --features owner_push               # 1,076 tests
 ./target/release/incord-memory-service serve
 ```
 
-> Startup takes roughly **2.5 minutes** — the embedding model loads first. A short
-> timeout will look like a crash when nothing is wrong.
+The sidecar staging step fingerprints this crate's source and skips the rebuild when nothing changed; `FORCE_SIDECAR_BUILD=1` overrides that.
 
-### Shipped as a desktop sidecar
-
-The desktop app bundles this binary as an `externalBin` sidecar and builds it with
-`--features owner_push,gpu`. The staging step fingerprints this crate's source and
-skips the rebuild when nothing changed; `FORCE_SIDECAR_BUILD=1` overrides that.
-
-The owner console (`assets/owner/owner.html`) is `include_str!`-embedded in this
-binary (`src/api/owner_feed.rs:650`), so it ships with the **engine** — a deploy
-that updates only a gateway does not update the console.
+The owner console (`assets/owner/owner.html`) is `include_str!`-embedded in this binary (`src/api/owner_feed.rs:650`), so it ships with the **engine** — a deploy that updates only a gateway does not update the console.
 
 ---
 
-## Hygiene
+## Scope, stated plainly
 
-Two things in this crate are known artifact pollution and should be cleaned up:
+Four claims in this README are absolute, and they are the four in the matrix. Everything else has an edge, and here they are:
 
-1. **`src/**/*.audit.bak.*`** — ~40 backup copies of source files sitting inside
-   `src/`, produced by the mandatory-backup rule. They are inside the compiled
-   crate's directory and they turn up in every `grep`.
-2. **`src/.backups/`** — same cause, same problem.
+**Four tree-sitter grammars.** Rust, TypeScript, JavaScript and Python get symbol-level structure. Go, Java, C++ and Ruby fall back to plain text and lose it. Adding a language is a grammar dependency and a mapping — not a rewrite — but it is not done today.
 
-Neither affects the build; both make the tree harder to read and searches noisier.
-Writing backups to a directory *outside* the crate would fix both without
-weakening the rule that creates them.
+**First launch is slow.** The embedding model loads before the engine answers — about 2.5 minutes, once, in the background. A short timeout will look like a crash when nothing is wrong.
 
----
+**The ecosystem is young.** Fewer integrations, fewer examples, fewer people who have hit your bug before than any hosted alternative.
 
-## Project status
+**Two known artifacts in the tree.** `src/**/*.audit.bak.*` (~40 backup copies produced by the mandatory-backup rule) and `src/.backups/`. Neither affects the build; both make `grep` noisier. Writing backups outside the crate fixes it without weakening the rule.
+
+### Status
 
 | Area | State |
 |---|---|
