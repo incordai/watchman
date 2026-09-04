@@ -717,8 +717,33 @@ Three properties carry over from the gates above, and all three are required:
 - **Recorder-backed, with a time bound.** A registry lookup is close to deterministic within a short window, so it belongs in the recorder — but on a TTL rather than a permanent verdict, since the answer changing is the entire point.
 - **Stands down when offline.** Unreachable registry means the gate steps aside on the same three-attempt rule. A flaky network must never wedge a session.
 
-**Every gate stands down after 3 attempts**
-, and each has an off switch (`MEMORY_FIRST_OFF`, `SESSION_OPENING_OFF` in a project's `.incord/`, or `~/.incord/RULE_GATE_OFF` globally). **A memory service that is down can never wedge a session** — a deliberate property, not an accident. Enforcement you cannot disable is enforcement you will eventually rip out.
+### Beyond code — guards per category 🚧
+
+The gates above were built for a coder, and code is the **reversible** case: a bad edit is a `git revert`. The categories coming next are the ones where that is not true. A sent email has no undo. A published post is screenshotted before it is deleted. A PR comment is already in someone's inbox.
+
+So the guard extends from the domain where mistakes are cheap into the domain where they are permanent — and rules become **per folder and per category**: the folder says which project, the category says how bad a mistake would be.
+
+| Category | Examples |
+|---|---|
+| **Outbound communication** | Email, chat replies, PR and issue comments, social posts |
+| **Spend** | Anything that costs money |
+| **Identity** | Anything published *as* you or as the company |
+| **Data destruction** | Deletes, drops, force-pushes |
+
+#### The default has to invert
+
+Every code gate stands down after 3 attempts, because a memory service that is down must never wedge a session. **Carrying that rule into outbound actions would be a bug**, not a feature: block, block, block, *send anyway* turns the guard into a three-attempt delay on precisely the thing it exists to stop.
+
+| | On failure, or no answer |
+|---|---|
+| **Code gates** | **Fail open.** Worst case is ground re-covered. Wedging the session is the larger harm. |
+| **Outbound, spend, identity, destruction** | **Fail closed.** Nothing goes without an answer. An unsent email is an inconvenience; a sent one is permanent. |
+
+"No answer" includes you being asleep. These wait, rather than timing out into a send.
+
+**And the approval has a cryptographic identity, not a role.** What waits on your phone is the actual text that would go out, sealed to your owner key — so a teammate cannot approve it on your behalf, and the relay carrying it cannot read it. That is a stronger guarantee than a human-in-the-loop checkbox, because the human in the loop is provably you.
+
+**Every code gate stands down after 3 attempts**, and each has an off switch (`MEMORY_FIRST_OFF`, `SESSION_OPENING_OFF` in a project's `.incord/`, or `~/.incord/RULE_GATE_OFF` globally). **A memory service that is down can never wedge a session** — a deliberate property, not an accident. Enforcement you cannot disable is enforcement you will eventually rip out.
 
 Rule text is injected at `SessionStart` and again on `UserPromptSubmit`, so a rule cannot fall out of a long context.
 
@@ -1121,6 +1146,7 @@ Four claims in this README are absolute, and they are the four in the matrix. Ev
 | Company memory plane | ✅ shipping — drop a file, it is embedded and in the graph |
 | P2P team sync | ✅ shipping — direct pull + relay fallback |
 | Belief hold | ✅ releases as soon as the CLI answers again |
+| Guards beyond code (outbound · spend · identity) | 🚧 designed |
 | Staleness gates (dependency versions first) | 🚧 designed |
 | Live session view (localhost WS + owner digest) | 🚧 designed |
 | Code harness (multi-provider workers) | 🧪 in testing |
