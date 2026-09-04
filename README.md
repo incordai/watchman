@@ -1,8 +1,14 @@
-# Incord Watchman Memory
+# Watchman
+
+**Memory, governance and audit for AI coding agents. Local-first, by [Incord](https://incord.ai/).**
+
+*This repository is the engine — `incord-memory-service`. Everything below runs inside it.*
+
+---
 
 **Your AI agent forgets everything when the window closes. The ones that don't are shipping your code to somebody else's server.**
 
-Incord is the third path: a memory, governance and audit engine that runs entirely on your machine, captures every session and every edit automatically, and syncs to your teammates **directly** — peer to peer, end-to-end encrypted, with no cloud in the data path.
+Watchman is the third path: a memory, governance and audit engine that runs entirely on your machine, captures every session and every edit automatically, and syncs to your teammates **directly** — peer to peer, end-to-end encrypted, with no cloud in the data path.
 
 It is the only system in its category that can **stop an agent mid-action**.
 
@@ -18,6 +24,10 @@ And it asks nothing of you after install. Hooks wire themselves. Capture starts 
 
 </div>
 
+![The memory graph in 2D, showing project clusters and the links between them](https://incord.ai/docs/watchman/shot-03.png)
+
+<div align="center"><i>Everything the machine remembers, filed by project. <a href="https://incord.ai/docs/watchman/">Full product guide →</a></i></div>
+
 ---
 
 ## Four things nothing else does
@@ -31,13 +41,32 @@ Every memory product will tell you it remembers. Here is what none of them will 
 | 🕸️ **It understands code, not just text.** | Symbols, call edges, file history, tree-sitter chunking. `find_symbol` returns a definition, not a ranked guess. |
 | 🤝 **Teams sync machine to machine.** | The server is a phone book and a post box. It never holds plaintext, never arbitrates a conflict, and everything keeps working while it is down. |
 
-And one thing that makes the rest possible: **capture is automatic.** Editor hooks record every session and every file edit. There is no "remember this" step to forget — which is the reason most memory tools quietly end up empty.
+### And nobody has to be in the loop
+
+Most "autonomous" agent tooling means an agent that stops every four minutes to ask you a question. Watchman's default is the opposite: **it runs the whole loop without you, and interrupts only for the things that are genuinely irreversible.**
+
+| Runs itself | What that means in practice |
+|---|---|
+| **Capture** | Editor hooks record every session and every edit. No "remember this" step to forget — the reason most memory tools quietly end up empty. |
+| **The proxy** | Set to **decide**, it answers the coder's approval requests *as you*, from a brief you wrote about the project. You are not at the keyboard pressing yes. |
+| **The auditor** | Reads what the coder actually edited, raises a finding per file, and puts it in the coder's next turn as a conversation it has to answer. |
+| **The recorder** | Caches proven tool results, so the model never pays twice to work out the same answer. |
+| **Session hygiene** | Facts, titles, daily summaries, clear-checks and handoffs are written on their own. Nothing to file, nothing to tidy. |
+
+**Three things it will never decide for you**, no matter how the dial is set:
+
+- **Anything the Guard stopped.** A guard block is never auto-decided — that is a hard rule, not a setting.
+- **Anything above the severity ceiling.** You set the highest severity the proxy may act on; PIN-gated items reach you regardless.
+- **Anything on an unbriefed project.** With no brief it does not guess. It stamps the card saying so, rather than leaving you to wonder why it stayed quiet.
+
+Autonomy is a dial on the reversible work. It is never a bypass on the work that cannot be undone.
 
 ---
 
 ## Contents
 
 - [Why local-first wins](#why-local-first-wins)
+- [What it costs to run](#what-it-costs-to-run)
 - [How it compares](#how-it-compares)
 - [Architecture](#architecture)
 - [The engine](#the-engine)
@@ -47,6 +76,8 @@ And one thing that makes the rest possible: **capture is automatic.** Editor hoo
 - [Governance: rules, guards and gates](#governance-rules-guards-and-gates)
 - [The code auditor](#the-code-auditor)
 - [The owner proxy](#the-owner-proxy)
+- [The recorder](#the-recorder--the-same-answer-is-never-paid-for-twice)
+- [Three memory planes](#three-memory-planes-one-interface)
 - [Storage model](#storage-model)
 - [Configuration](#configuration)
 - [Engineering decisions, and why](#engineering-decisions-and-why)
@@ -61,9 +92,9 @@ And one thing that makes the rest possible: **capture is automatic.** Editor hoo
 
 Ask what actually has to be true for an AI memory system to be worth adopting:
 
-**It has to require nothing of you.** A memory tool with a "save this" button is a memory tool that ends up empty, because the moment worth saving is never the moment you think to press it. Incord captures through editor hooks, so the record is complete whether or not anyone was paying attention. Everything downstream — indexing, the code graph, the auditor, peer sync — is background work on a schedule. The correct amount of ongoing effort is zero, and that is what this costs.
+**It has to require nothing of you.** A memory tool with a "save this" button is a memory tool that ends up empty, because the moment worth saving is never the moment you think to press it. Watchman captures through editor hooks, so the record is complete whether or not anyone was paying attention. Everything downstream — indexing, the code graph, the auditor, peer sync — is background work on a schedule. The correct amount of ongoing effort is zero, and that is what this costs.
 
-**It has to be there tomorrow.** Hosted memory is a dependency with a pricing page and a shutdown notice. Incord is a binary on your disk and a single redb file. There is no version of "the vendor changed direction" that takes your history away.
+**It has to be there tomorrow.** Hosted memory is a dependency with a pricing page and a shutdown notice. Watchman is a binary on your disk and a single redb file. There is no version of "the vendor changed direction" that takes your history away.
 
 **It has to cost nothing at the margin.** Recall runs against a local 256-dimensional index. You are not billed to remember. That single fact changes behaviour: teams that pay per query learn to query less, and a memory nobody searches is not a memory.
 
@@ -73,16 +104,36 @@ Ask what actually has to be true for an AI memory system to be worth adopting:
 
 ---
 
+## What it costs to run
+
+Agent tooling gets expensive in two ways: model calls you did not need, and your own hours spent answering prompts. Watchman is engineered against both, and the mechanisms are specific rather than aspirational.
+
+| Mechanism | The saving |
+|---|---|
+| **Use the sign-in you already pay for** | The proxy, the background jobs and the auditor all run on your own installed agent CLI — your existing auth. No API key, no second bill. A metered service is available and never required. |
+| **One review per decision, ever** | A decision is reviewed by a model exactly once and the flag is stored. No restart, re-notification or sync replay can spend a second call on the same card. |
+| **The routine cases cost nothing** | Continuations and handoffs approve on a fast lane with **no model call at all**. Only genuinely new decisions are worth thinking about. |
+| **Proven work is never repeated** | The recorder serves deterministic tool calls from the record instead of running and billing them again. |
+| **The auditor has a dial** | Files per run is an explicit setting, because a strong model is slow and metered. You choose the depth instead of discovering the bill. |
+| **And the largest saving is not billed at all** | Every approval the proxy answers is an interruption that never reaches you. |
+
+**Set every model to `off` and it still works.** Capture, filing, linking, the graph and search all keep running with nothing spent. The memory does not depend on a model being paid — that is the floor, and the floor is free.
+
+---
+
 ## How it compares
 
 > Competitor rows describe the shipping products as of **September 2026** — the only claims here not read from this repository. Verify before you rely on them.
 
-| | **Incord** | Mem0 | Zep | Letta | Claude native | Cursor rules |
+| | **Watchman** | Mem0 | Zep | Letta | Claude native | Cursor rules |
 |---|---|---|---|---|---|---|
 | **Can block a tool call** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Self-auditing code review** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
-| **Code graph (symbols · calls)** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Self-auditing code review** | **✅** live, on save | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Decides for you while you're away** | **✅** proxy | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Caches proven tool results** | **✅** recorder | ❌ | ❌ | ❌ | ❌ | ❌ |
+| **Code graph (symbols · calls)** | **✅** folder-scoped | ❌ | ❌ | ❌ | ❌ | ❌ |
 | **P2P team sync, no cloud data path** | **✅** | ❌ | ❌ | ❌ | ❌ | ❌ |
+| Org-wide memory you can drop files into | ✅ | ⚠️ | ⚠️ | ❌ | ❌ | ❌ |
 | Automatic capture (no "remember this") | ✅ hooks | ❌ | ❌ | ❌ | ⚠️ partial | ❌ |
 | Runs fully offline | ✅ | ⚠️ self-host | ❌ | ⚠️ self-host | ❌ | ✅ |
 | Data never leaves the machine | ✅ | ⚠️ | ❌ | ⚠️ | ❌ | ✅ |
@@ -97,7 +148,7 @@ Ask what actually has to be true for an AI memory system to be worth adopting:
 | **Ongoing effort** | **🟢 none** — fully automatic | 🟡 manual writes | 🟡 manual writes | 🟡 manual writes | 🟡 partial | 🔴 hand-written rules |
 | Ecosystem maturity | 🔴 young | 🟡 | 🟡 | 🟡 | 🟢 | 🟢 |
 
-**Read the setup rows, then read the top four again.** The usual trade — more control in exchange for more work — is not on offer here, because there is no work. Incord installs like the hosted options and then does more than any of them, for nothing per call, on hardware you already own. The one honest cost is the last row: the ecosystem is young, and there are fewer people who have hit your bug before. That is the entire downside column.
+**Read the setup rows, then read the six bolded ones again.** The usual trade — more control in exchange for more work — is not on offer here, because there is no work. Watchman installs like the hosted options and then does six things none of them do, for nothing per call, on hardware you already own. The one honest cost is the last row: the ecosystem is young, and there are fewer people who have hit your bug before. That is the entire downside column.
 
 ### Where the data lives — the axis that decides everything else
 
@@ -110,7 +161,7 @@ quadrantChart
     quadrant-2 "Team, local-first"
     quadrant-3 "Solo, local-first"
     quadrant-4 "Solo, hosted"
-    "Incord": [0.14, 0.86]
+    "Watchman": [0.14, 0.86]
     "Mem0 (self-host)": [0.30, 0.42]
     "Mem0 (cloud)": [0.84, 0.52]
     "Zep": [0.86, 0.60]
@@ -120,7 +171,7 @@ quadrantChart
     "Plain RAG + pgvector": [0.40, 0.30]
 ```
 
-The top-left quadrant is empty except for Incord. Everything else forces a choice between *your data stays yours* and *your team shares a brain*. That choice is the thing this project exists to delete.
+The top-left quadrant is empty except for Watchman. Everything else forces a choice between *your data stays yours* and *your team shares a brain*. That choice is the thing this project exists to delete.
 
 ---
 
@@ -355,7 +406,7 @@ From the top-level command enum in `src/cli.rs`. (Extracted by pattern; a handfu
 
 This is why the memory is never empty.
 
-| Event | What Incord does |
+| Event | What Watchman does |
 |---|---|
 | `SessionStart` | Injects rules, project memory, open audit findings, the session record |
 | `UserPromptSubmit` | Injects the relevant memory for *this* prompt |
@@ -397,6 +448,17 @@ flowchart TD
 **Scope is a boundary, not a preference.** A scoped search never widens into a global one — so a scoped answer can never quietly contain the client's code you are not supposed to be looking at. An unknown scope is refused *with the list of known ones*, because silently returning nothing is how a search engine teaches you to distrust it.
 
 **Embeddings are 256-dimensional**, truncated from the model's native width and re-normalised to unit length before storage (`src/embedder.rs:526`). The `incord-rag` crate also carries multimodal entry points — `embed_image`, `embed_video`, `embed_document`, `has_vision` — alongside `rerank`, `rerank_with_instruct` and `rerank_batch`.
+
+### The graph is folder-shaped, not one giant blob
+
+This is where most knowledge-graph memory quietly falls over. Everything gets wired to everything, the graph becomes a hairball, and by month three a query traverses half your history to answer a question about one file.
+
+Watchman does not build that graph. **Nodes are organised by folder, under a project id, and the traversal radius stays small.** A question about `src/p2p/` walks `src/p2p/` — not the other eleven projects, not last year, not the company handbook. The structure your code already has *is* the structure of the graph, which means it stays legible at a million nodes for the same reason a filesystem does.
+
+Two things fall out of that, and both matter more than they sound:
+
+- **Answers stay relevant as the graph grows.** Precision does not decay with volume, because volume elsewhere is not in the search path.
+- **A scoped answer cannot leak.** Combined with scope refusal above, another project's code has no edge that reaches this query.
 
 ---
 
@@ -442,6 +504,10 @@ Code chunks are **content-addressed and deduplicated** — in a verified test, o
 
 ### The server's role, precisely
 
+![The Network page showing team machines on a world map with live and relayed counts](https://incord.ai/docs/watchman/shot-05.png)
+
+*Which machines are reachable directly, and which are being relayed.*
+
 | Does | Does not |
 |---|---|
 | Directory — nodes register an address, look up their team roster | Hold plaintext |
@@ -485,7 +551,32 @@ flowchart TD
 | Memory-first gate | `src/cli/guard_rules.rs` | Acting on a subject before querying memory about it |
 | Session-opening gate | `src/cli/guard_rules.rs` | Starting work without reading the previous session's handoff |
 
-The shell source-edit gate is the one people underestimate. An agent that cannot edit a file through the editor tool will reach for `sed -i` — and every governance layer built on tool names is now blind. Incord blocks that path specifically.
+The shell source-edit gate is the one people underestimate. An agent that cannot edit a file through the editor tool will reach for `sed -i` — and every governance layer built on tool names is now blind. Watchman blocks that path specifically.
+
+### The command classes, and the two postures above them
+
+![The Guard page: autopilot and approve-everything at the top, then a card per command class](https://incord.ai/docs/watchman/shot-16.png)
+
+*Destructive git · commits · pushes · file deletes · database writes · deploys · remote transfers · SSH mutations · sudo.*
+
+Each class flips between **strict** and allow-always **independently**, so tightening one does not quietly loosen another. Two switches sit above them:
+
+- **Autopilot** — routine, checked-safe calls run without asking. Risky decisions still go to your phone, and hard blocks still block.
+- **Approve everything here** — the opposite posture. Every non-trivial call, including file edits, waits for you or the proxy. It is a file in the project (`.incord/FORWARD_ALL`), so it travels with the repo instead of living in a menu.
+
+There is a CLI too — `guard allow / block / once / status` — for when you are already in a terminal.
+
+### What has no switch at all
+
+The genuinely destructive cases are **not on that page**, and their absence is the design: deleting a critical path, reading secret files, piping the web into a shell. There is no toggle to find because they are never bypassable. A permission system whose most dangerous entries can be turned off by the thing being governed is decoration.
+
+### The approval finds you
+
+![A desktop notification raised by the guard: approval needed to continue, naming the rule that blocked it and the exact reason](https://incord.ai/docs/watchman/shot-21.png)
+
+*Named rule, exact reason — you decide on the specific act, not on "an agent wants something".*
+
+A desktop notification here, a push on your phone, a card in the console. Each names the rule that stopped it and why.
 
 **Every gate stands down after 3 attempts**, and each has an off switch (`MEMORY_FIRST_OFF`, `SESSION_OPENING_OFF` in a project's `.incord/`, or `~/.incord/RULE_GATE_OFF` globally). **A memory service that is down can never wedge a session** — a deliberate property, not an accident. Enforcement you cannot disable is enforcement you will eventually rip out.
 
@@ -495,9 +586,21 @@ Rule text is injected at `SessionStart` and again on `UserPromptSubmit`, so a ru
 
 ## The code auditor
 
-A second model reviews what the coder just wrote, and the coder must answer.
+Memory captures what happened. **The auditor goes looking for what is wrong.**
 
-**It reviews what was edited, not what the folder contains.** Selection reads the `Touched` entries the `PostToolUse` hook already wrote (`src/cli/capture_session.rs:217`) — so the edit list costs no model call and no directory walk. A file that arrives any other way — a pull, a merge, another tool — is deliberately *not* a candidate. This is an audit of the coder's work, not a repository scanner.
+The moment the coder saves a file, the `PostToolUse` hook writes a `Touched` entry (`src/cli/capture_session.rs:217`) and that file becomes a candidate. The sweep picks it up on the cadence you set — hourly through end-of-day — raises a finding, and puts it in the coder's next turn as a conversation it has to answer. Not a one-line complaint: a finding can be discussed, corrected, or closed with a reason.
+
+**It reviews what was edited, not what the folder contains.** Selection reads those `Touched` entries, so the edit list costs no model call and no directory walk. A file that arrives any other way — a pull, a merge, another tool — is deliberately *not* a candidate. This is an audit of the coder's work, not a repository scanner.
+
+![Background jobs and the code auditor: model source, which CLI answers, cadence, files per run, and the build command that gates every applied fix](https://incord.ai/docs/watchman/shot-14.png)
+
+*Files per run is the cost dial. The build command is the safety catch.*
+
+### The build command is not optional
+
+The **build/test command** gates every fix the auditor applies. A fix that fails it is **reverted** and left for a human, and auto-apply cannot even be switched on until you have set one. The auditor is structurally incapable of leaving behind code it has not proven still builds — which is the difference between a review bot you can leave running and one you have to babysit.
+
+Findings feed the same memory as everything else, so the proxy reviewing a decision about a file can see what the auditor already said about it.
 
 ```mermaid
 stateDiagram-v2
@@ -518,9 +621,25 @@ A claim of "fixed" is **not trusted**: the auditor re-reviews any file whose mti
 
 ## The owner proxy
 
-The proxy acts *as you* on decisions — so an agent working overnight is not stuck waiting for you to wake up, and is not free to invent your intent either.
+**The half of the product that acts.** Memory answers questions you thought to ask. The proxy uses the same memory to answer the approvals your agents raise while you are asleep — and every answer you give it becomes evidence for the next case, so it gets better at being you the more it is used.
 
-To do that it holds a **belief** about each project, built in parts:
+![The Proxy settings: off, recommend or decide; the severity it may act up to; which CLI answers; and the per-project brief](https://incord.ai/docs/watchman/shot-18.png)
+
+*Off, recommend or decide — plus the severity ceiling and the per-project brief it decides from.*
+
+### Three postures
+
+| | |
+|---|---|
+| **Off** | Never calls a model at all. |
+| **Recommend** | Reviews and advises. You still decide. |
+| **Decide** | Answers as you, and escalates the rest. |
+
+Alongside the posture sits a **severity ceiling** — the highest severity it may act on. PIN-gated items always reach you regardless. And two hard limits no setting can move: **commands stopped by the Guard are never auto-decided**, and a project with no brief is never decided on at all — the card is stamped saying so rather than left silently pending.
+
+### The brief it decides from
+
+A brief is short. *"Ship fast, never break prod, no new dependencies"* is a complete answer. It has three parts, and **each saves on its own** — answer `about` today and `goals` next week; an empty field never overwrites a stored one.
 
 | Part | What it is |
 |---|---|
@@ -528,13 +647,87 @@ To do that it holds a **belief** about each project, built in parts:
 | `goals` | What success looks like, what comes next, what must never be approved |
 | `prd` | The product document every decision is judged against |
 
-**Each part is saved on its own.** A draft that answers one part fills that part and keeps the rest; an empty field never overwrites a stored one. You can answer `about` today and `goals` next week — the system does not demand a complete specification before it does anything useful.
+The product document grows beside it, drafted *with* you: the proxy researches, checks its claims, files the result into the project's memory, and comes back with the questions it could not answer from the code — which market ships first, which stack is the truth going forward, what licence you intend. **Intent is not in your source files, so it asks rather than inventing.**
 
-**Documents are read once.** Each scanned file carries a stable `id` (SHA-256 of its project-relative path) and a `stamp` (a digest of the text actually read), kept in `ProjectBrief.doc_reads`. A document whose stamp matches is **named but not re-sent** — the drafter is told it is part of the belief already held, so its absence can never be read as the project lacking it.
+![The Proxy tab drafting a product document, listing the questions it could not answer from the code](https://incord.ai/docs/watchman/shot-08.png)
+
+*It argues back when the facts do, and every claim carries its source.*
+
+### The approvals still reach you — wherever you are
+
+![The owner's app on a phone, showing approvals waiting and the memory it can be asked directly](https://incord.ai/docs/watchman/owner-app.png)
+
+*A blocked agent is not blocked until you are back at your desk.*
+
+The owner's app pairs to your account with an **owner key** and carries what is waiting: `INBOX`, `CHAT`, `DECIDED`, `PRODUCT`. It is the same memory, not a summary of it — ask what changed, what was decided, or why something is the way it is, and the answer is grounded in your own history.
+
+A device paired with an owner key can answer your approvals; a crew invitation cannot. The guard's cards and the proxy's notes are **sealed to that key** and travel only to your own devices — a teammate is never sent them, and the relay that carries them between machines cannot read them.
+
+### Under the hood: documents are read once
+
+Each scanned file carries a stable `id` (SHA-256 of its project-relative path) and a `stamp` (a digest of the text actually read), kept in `ProjectBrief.doc_reads`. A document whose stamp matches is **named but not re-sent** — the drafter is told it is part of the belief already held, so its absence can never be read as the project lacking it.
 
 > The stamp is a content digest rather than size+mtime. Size+mtime was tried first and was measurably wrong on this hardware: two fixture files written in one operation came back with byte-identical stamps, because the filesystem's mtime granularity is coarser than the writes. The scan has already read the file, so hashing costs no extra IO — and what this saves is tokens, not the local read.
 
-The rate limit is a single rule with no timer: **an unanswered question stops the asking, and an answer restarts it.** Silence is self-terminating in both directions — no notification storm, no queue that ages out something important.
+The rate limit on the questions that *do* reach you is a single rule with no timer: **an unanswered question stops the asking, and an answer restarts it.** Silence is self-terminating in both directions — no notification storm, no queue that ages out something important.
+
+---
+
+## The recorder — the same answer is never paid for twice
+
+A model that solves an identical problem on Tuesday and again on Wednesday has billed you twice for one piece of thinking. The Watchman recorder ends that.
+
+![The recorder: proven, deterministic and divergent counts across thousands of recorded tool calls, the confidence split, and the handoff list of calls already solved](https://incord.ai/docs/watchman/shot-17.png)
+
+*Deterministic calls are marked **serve, don't run**. Divergent ones are **never cached**.*
+
+Every tool call is recorded with its exact input and output, and each `(tool, input)` signature earns one of three verdicts:
+
+| Verdict | What happens |
+|---|---|
+| **Deterministic** | Same answer every observed run. **Serve, don't run** — the stored output is returned and no model call is made. |
+| **Divergent** | The answer changes. **Never cached** — an answer that varies must be asked again. |
+| **Unwitnessed** | Seen once, not yet proven either way. Most calls start here and only earn a verdict after enough observations to be sure. |
+
+That last row is what separates this from a prompt cache. A cache assumes a result is still good because a timer has not run out. The recorder **proves** it by repeated observation, and refuses to cache anything it has watched change.
+
+| Tool | What it gives you |
+|---|---|
+| `watchman_lookup` | Ask before running: is this exact call already solved? On a hit, serve the output and skip the tool entirely. |
+| `watchman_handoff` | **Already solved** — the exact calls that no longer cost anything, each with how many times it has been reused instead of re-run. |
+| `watchman_report` | The determinism census: how much of a project's behaviour is deterministic, how much diverges, and which models produced it. |
+
+The compounding effect is the point. A project's routine work migrates, call by call, out of the expensive model and into a lookup table — and the handoff list tells you exactly how much has already moved.
+
+---
+
+## Three memory planes, one interface
+
+Memory is not only your own history. Watchman keeps three planes and exposes each over MCP, so any agent — coding, social, internal — reads the one it needs and nothing else.
+
+| Plane | Who fills it | What it is for |
+|---|---|---|
+| **Personal / project** | Editor hooks, automatically | Your sessions, edits, decisions, code graph, filed per project |
+| **Company** | Anyone in the org, via databases and connectors | Business data — documentation, rows, records — landing in a company's own folder and searchable with everything else |
+| **Connected accounts** | Social and connector sync | Social-agent memory and third-party sources, addressable through the same tools |
+
+![Company data before anything is attached: a company must exist first, because a database needs somewhere to land](https://incord.ai/docs/watchman/shot-12.png)
+
+*A company is a name plus a real folder on a drive you pick.*
+
+**Company data sits beside your work, not mixed into it.** The ordering is deliberate: a company must exist before a database can be attached, because otherwise there is nowhere for the rows to go. Once attached, what the connector returns is filed to that company's folder, embedded, linked into the graph, and findable exactly like everything else — with no separation to maintain and no ETL job to own.
+
+### Filed by folder, not piled in a heap
+
+This is the rule underneath all three planes, and it is why they stay separable:
+
+> **Memory is filed by folder.** You name projects and assign folders to them; anything captured under an assigned folder belongs to that project. **The deepest matching folder wins**, so a subproject beats its parent, and anything unassigned lands in `general`.
+
+![The Projects page, with named projects each listing their assigned folders](https://incord.ai/docs/watchman/shot-09.png)
+
+*One name that memory, decisions and the proxy all use to mean the same thing.*
+
+Because each plane is a separate MCP surface, **anyone can build on it**. Your memory is exposed as an MCP connector over OAuth — paste the URL into another AI app's connector settings and approve on the consent screen. There is no key to copy. An agent that has no business reading your code can still read the company handbook; the boundary is the interface, not a promise.
 
 ---
 
@@ -603,14 +796,14 @@ The ordered-key property is load-bearing, not incidental: the by-project session
 |---|---|---|---|
 | 1536 (OpenAI large) | 6,144 | 6.1 GB | +2–4 % |
 | 768 (base) | 3,072 | 3.1 GB | baseline |
-| **256 (Incord)** ✅ | **1,024** | **1.0 GB** | **−1–3 %** |
+| **256 (Watchman)** ✅ | **1,024** | **1.0 GB** | **−1–3 %** |
 | 128 | 512 | 0.5 GB | −8–12 % |
 
 256 is the knee: **⅓ the storage of 768** for a small recall cost, and it keeps a million-vector index inside a laptop's page cache. A hosted service optimises for recall on somebody else's RAM; a local-first one optimises for the machine it is actually running on.
 
 ### Chunking — tree-sitter
 
-| Approach | Respects syntax | Cost | Incord |
+| Approach | Respects syntax | Cost | Watchman |
 |---|---|---|---|
 | Fixed-size windows | ❌ splits functions | 🟢 trivial | fallback |
 | Recursive character split | ⚠️ approximate | 🟢 cheap | ❌ |
@@ -663,7 +856,9 @@ Four claims in this README are absolute, and they are the four in the matrix. Ev
 | Code graph + chunking | ✅ shipping (4 languages) |
 | Guards, rules, gates | ✅ shipping |
 | Code auditor | ✅ shipping — per-file findings |
-| Owner proxy + belief | ✅ shipping — parts save independently |
+| Owner proxy + belief | ✅ shipping — autonomous decisions, parts save independently |
+| Recorder (tool-result cache) | ✅ shipping |
+| Company memory plane | ✅ shipping — drop a file, it is embedded and in the graph |
 | P2P team sync | ✅ shipping — direct pull + relay fallback |
 | Belief hold | ✅ releases as soon as the CLI answers again |
 | WebSocket owner surface | 🚧 planned |
