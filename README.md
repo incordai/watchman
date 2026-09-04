@@ -1,4 +1,4 @@
-# Incord Memory
+# Incord Watchman Memory
 
 **Your AI agent forgets everything when the window closes. The ones that don't are shipping your code to somebody else's server.**
 
