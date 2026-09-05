@@ -93,7 +93,7 @@ Autonomy is a dial on the reversible work. It is never a bypass on the work that
 
 Ask what actually has to be true for an AI memory system to be worth adopting:
 
-**It has to require nothing of you.** A memory tool with a "save this" button is a memory tool that ends up empty, because the moment worth saving is never the moment you think to press it. Watchman captures through editor hooks, so the record is complete whether or not anyone was paying attention. Everything downstream — indexing, the code graph, the auditor, peer sync — is background work on a schedule. The correct amount of ongoing effort is zero, and that is what this costs.
+**It has to require nothing of you.** A memory tool with a "save this" button is a memory tool that ends up empty, because the moment worth saving is never the moment you think to press it. Watchman captures through editor hooks, installed into **every agent tool it finds on the machine** — so switching from one agent to another does not restart your history. Everything downstream — indexing, the code graph, the auditor, peer sync — is background work on a schedule. The correct amount of ongoing effort is zero, and that is what this costs.
 
 **It has to be there tomorrow.** Hosted memory is a dependency with a pricing page and a shutdown notice. The memory engine is an executable on your disk and a single redb file. There is no version of "the vendor changed direction" that takes your history away.
 
@@ -287,7 +287,7 @@ Nothing in that loop needs you in it. That is the point.
 
 ## The engine
 
-Rust, axum 0.8, tokio, redb 4.2, **111,104 lines** across `src/`, in **79 modules**.
+Rust, axum 0.8, tokio, redb 2. **111,104 lines** across `src/`, in **79 modules**.
 
 ```
 incord-memory-service/
@@ -457,6 +457,26 @@ This is why the memory is never empty.
 
 > `PostToolUse` writing only `Touched` is deliberate. Every other entry category is a *claim about meaning* — what is outstanding, what remains true — and only the agent doing the work can make one. A file edit is a mechanical fact the hook already observes, so it costs no model call and cannot be wrong about itself.
 
+### The session record — observed, not summarised
+
+Every other tool hands off by asking a model to summarise the window. That degrades twice: it is a lossy compression of an already-lossy context, and it is only as good as whatever happened to still be in the window when it ran.
+
+**No model writes the session record.** It is assembled from what the hooks already saw, as the work happens — typed entries, each with a memory id, a file link, and which agent made the edit. Not prose about the session; the session's state.
+
+| | |
+|---|---|
+| **Typed, not narrative** | Fixed, pending, touched. The next session gets *what to do next*, not a paragraph it has to infer intent from. |
+| **Linked, not restated** | A memory id and a file path, so the detail is looked up rather than re-summarised and re-corrupted. |
+| **Attributed** | Which agent made the edit — a real question when Claude is in one tab and Codex in another, and one no single-vendor tool can answer. |
+| **Bounded** | The last few that matter, not everything in the window. A record too large to inject gets truncated, which is how it becomes lossy again. |
+
+The `clear` flow is where it is sealed and handed forward: `/session/clear-check`, `clear-request`, `clear-confirm`. The context ends **deliberately, with the state written**, instead of being summarised in a panic at the token limit — and the next session starts from that record.
+
+> Some things genuinely cannot be observed. *"This approach was wrong, do not retry it"* is a claim about meaning, so an agent writes it explicitly through `remember`, and the auditor contributes findings. The record has a mechanical spine and optional annotations — never a model's account of itself.
+
+**This is the same rule everywhere in the system.** `PostToolUse` writes only what it saw. The recorder marks a call deterministic only after watching it repeat. The auditor does not believe *"fixed"* — it re-reads the file. Observed, not asserted.
+
+
 ---
 
 ## Retrieval
@@ -485,6 +505,24 @@ flowchart TD
 ```
 
 **Scope is a boundary, not a preference.** A scoped search never widens into a global one — so a scoped answer can never quietly contain the client's code you are not supposed to be looking at. An unknown scope is refused *with the list of known ones*, because silently returning nothing is how a search engine teaches you to distrust it.
+
+#### The failure this prevents
+
+Cross-project contamination does not produce a missing answer. It produces a **confidently wrong** one.
+
+An agent asks how something is done here. Retrieval returns a Python pattern from an unrelated repo, because it scored well on similarity. The agent writes it in Rust. Nothing errored, nothing looked broken — the memory actively made the code worse, and it did so invisibly. That is worse than having no memory at all: with no memory the agent reads the source; with bad memory it does not bother.
+
+It is also the failure that gets **more likely as the store fills**. More projects means more plausible-looking neighbours from the wrong context, so a general vector store degrades exactly as it becomes more valuable. Most products treat that as a ranking problem to tune. Here it is structurally impossible: a project id on every call, no unscoped path, and no edges reaching out of the folder.
+
+**A hundred projects behave like a hundred separate memories, not one shared one.** Precision does not decay as you add projects, because the other ninety-nine were never in the search path.
+
+#### `general` is staging, not a fallback
+
+On first install there are no folders to file against, so imported history lands in `general`. As projects are named and folders assigned, that history is **re-filed** out of staging into the project that owns it.
+
+The distinction matters. A fallback is a hole — a scoped query that quietly widens is contamination waiting to happen. Staging is a one-way door: things move *out* of it, and no query ever falls into it by accident.
+
+It also means a fresh install **starts full rather than empty.** Setup finds the agent tools already on the machine, imports their history, and installs hooks into each of them — so recall works on day one instead of after a month of accumulation.
 
 **Embeddings are 256-dimensional**, truncated from the model's native width and re-normalised to unit length before storage (`src/embedder.rs:526`). The `incord-rag` crate also carries multimodal entry points — `embed_image`, `embed_video`, `embed_document`, `has_vision` — alongside `rerank`, `rerank_with_instruct` and `rerank_batch`.
 
@@ -950,6 +988,18 @@ That is not an activity log. It is a live record of an agent being governed, and
 
 > Backpressure is per frame type. Intermediate *thinking* frames are droppable; state transitions and approval requests are not — losing one of those leaves the UI showing a worker as running when it is actually blocked on you.
 
+#### The terminal, and why it is here
+
+Real terminals inside the app, each tab its own session on its own folder — so one window holds Claude in one tab, Gemini in the next, Codex in a third and the Watchman coder in a fourth, on **completely different codebases** at the same time. Each tab carries a live status dot, so twelve sessions stay readable as twelve dots rather than twelve windows.
+
+Voice input sits on the same bar: dictate the task, no typing.
+
+Beside it, a **read-only** file view — not an editor. Two tabs: **Changed**, which is what the running agent has touched this session, and **Files**, the tree. Changed is the one that matters, because it is the question you actually have when several agents are working. An editor with an agent extension can show you what *its* agent did; this shows every session in the window — Claude, Gemini, Codex, the Watchman coder — because the session record belongs to the store, not to whichever vendor happened to make the edit.
+
+**And it is light.** An IDE is a large resident process wrapped around a terminal that, for this workflow, is the only part being used. Someone supervising agents is not editing files by hand, so the editor's cost buys nothing — while the memory it holds is memory the embedder and reranker need. This is not a replacement for an editor. It is what you use when an agent is doing the typing.
+
+<!-- screenshot: terminal tabs + Changed/Files pane -->
+
 ### Agent — one interface, any speciality
 
 
@@ -1150,6 +1200,7 @@ Four claims in this README are absolute, and they are the four in the matrix. Ev
 | Staleness gates (dependency versions first) | 🚧 designed |
 | Live session view (localhost WS + owner digest) | 🚧 designed |
 | Code harness (multi-provider workers) | 🧪 in testing |
+| Embedded terminal (multi-session, voice, read-only file view) | 🧪 in testing |
 | Agent surface | 🧪 in testing |
 | Manthan (multi-model fusion → files) | 🧪 experimental |
 | Knowledge layer | 🧪 in testing — page still being built |
